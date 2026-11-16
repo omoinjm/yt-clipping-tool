@@ -50,13 +50,16 @@ export async function upsertSource(db: D1Database, id: string, body: Record<stri
   const cols = Object.keys(row);
   if (!("origin" in row && "owner" in row && "permission" in row)) throw new Error("origin, owner, permission required");
   const updates = cols.map((c) => `${c} = excluded.${c}`).concat("updated_at = datetime('now')").join(", ");
-  await db
-    .prepare(
+  const stmts = [
+    db.prepare(
       `INSERT INTO sources (id, ${cols.join(", ")}) VALUES (?, ${cols.map(() => "?").join(", ")})
        ON CONFLICT(id) DO UPDATE SET ${updates}`,
-    )
-    .bind(id, ...Object.values(row))
-    .run();
+    ).bind(id, ...Object.values(row)),
+  ];
+  // The job reports "ingested" through this upsert; log it like any stage change (the ETA uses the timeline).
+  if (row.stage && row.stage !== "queued")
+    stmts.push(db.prepare("INSERT INTO events (source_id, message) VALUES (?, ?)").bind(id, `stage → ${row.stage}`));
+  await db.batch(stmts);
 }
 
 export async function setSourceStage(db: D1Database, id: string, body: Record<string, unknown>) {

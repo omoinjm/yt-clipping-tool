@@ -252,6 +252,14 @@ export class ClipperStack extends Stack {
         resources: [queue.jobQueueArn, `arn:aws:batch:${this.region}:${this.account}:job-definition/clipper*`],
       }),
     );
+    // Source page: live Batch status (DescribeJobs has no resource-level permissions) and the job's log tail.
+    dashboardUser.addToPolicy(new iam.PolicyStatement({ actions: ["batch:DescribeJobs"], resources: ["*"] }));
+    dashboardUser.addToPolicy(
+      new iam.PolicyStatement({
+        actions: ["logs:GetLogEvents"],
+        resources: [`arn:aws:logs:${this.region}:${this.account}:log-group:/clipper/jobs:log-stream:*`],
+      }),
+    );
 
     new CfnOutput(this, "WorkBucketName", { value: work.bucketName });
     new CfnOutput(this, "RepoUri", { value: repo.repositoryUri });

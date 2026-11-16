@@ -31,6 +31,12 @@ button.primary{background:var(--accent);color:#111;border-color:var(--accent);fo
 .filters{display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap}.filters a{font-size:13px}.filters a.on{border-color:var(--accent)}
 .err{white-space:pre-wrap;font-family:ui-monospace,monospace;font-size:12px;color:var(--bad);background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px;overflow:auto}
 .flash{padding:10px 12px;border-radius:8px;border:1px solid var(--line);background:var(--panel);margin-bottom:14px}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px;margin:6px 0 4px}
+.steps{list-style:none;padding:0;margin:12px 0 0;display:flex;flex-wrap:wrap;gap:6px 18px;font-size:14px}
+.steps li{color:var(--muted)}.steps .mark{display:inline-block;width:1.2em}
+.steps .done .mark{color:var(--ok)}.steps .active{color:var(--text);font-weight:600}.steps .active .mark{color:var(--warn)}
+.steps .failed{color:var(--bad)}
+pre.logs{max-height:420px;overflow:auto;margin:0;padding:12px;background:#0a0c10;color:#cfd5df;border:1px solid var(--line);border-radius:10px;font:12px/1.5 ui-monospace,monospace;white-space:pre-wrap;word-break:break-word}
 `;
 
 export function Layout(props: { title: string; email: string; refresh?: boolean; children: Child }) {
@@ -77,4 +83,4 @@ const STAGE_TONE: Record<string, string> = {
 
 export const Pill = (p: { v: string }) => <span class={`pill ${STAGE_TONE[p.v] ?? ""}`}>{p.v}</span>;
 
-export const ACTIVE_STAGES = new Set(["queued", "running", "ingested", "transcribed", "scenes", "selected", "producing"]);
+export { ACTIVE_STAGES } from "../progress";

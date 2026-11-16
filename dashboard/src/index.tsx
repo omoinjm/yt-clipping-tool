@@ -5,7 +5,10 @@ import { ClipDetail, ClipGrid } from "./views/Clips";
 import { ACTIVE_STAGES, Layout, Pill } from "./views/Layout";
 import { NewSourceForm } from "./views/NewSource";
 import { SourceTable } from "./views/Sources";
-import { sourceKeyFor, submitBatchJob, validate, type NewSource, type Permission } from "./sources";
+import { sourceKeyFor, validate, type NewSource, type Permission } from "./sources";
+import { describeJobs, logTail, submitBatchJob, type LogLine } from "./aws";
+import { progress, syncBatch } from "./progress";
+import { LogPanel, ProgressPanel, RetryForm } from "./views/Progress";
 import { uploadToYouTube } from "./youtube";
 
 const app = new Hono<AppEnv>();
@@ -71,10 +74,11 @@ ui.get("/", async (c) => {
 
 ui.get("/sources", async (c) => {
   const sources = await db.listSources(c.env.DB);
+  const { jobs } = await syncBatch(c.env, sources); // also marks jobs that died silently as failed
   return c.html(
     <Layout title="Sources" email={c.get("email")} refresh={sources.some((s) => ACTIVE_STAGES.has(s.stage))}>
       <h1 class="row" style="justify-content:space-between">Sources <a class="btn primary" href="/sources/new" style="background:var(--accent);color:#111">+ New source</a></h1>
-      <SourceTable sources={sources} />
+      <SourceTable sources={sources} jobs={jobs} />
     </Layout>,
   );
 });
@@ -164,12 +168,30 @@ ui.post("/uploads/abort", async (c) => {
 
 ui.get("/sources/:id", async (c) => {
   const id = c.req.param("id");
-  const [source, clips, events] = await Promise.all([
-    db.getSource(c.env.DB, id), db.listClips(c.env.DB, { source: id }), db.sourceEvents(c.env.DB, id),
-  ]);
+  const source = await db.getSource(c.env.DB, id);
   if (!source) return c.notFound();
+  const { jobs, error: batchError } = await syncBatch(c.env, [source]);
+  // syncBatch may have just marked it failed, so read clips/events after it.
+  const [clips, events] = await Promise.all([db.listClips(c.env.DB, { source: id }), db.sourceEvents(c.env.DB, id)]);
+  const active = ACTIVE_STAGES.has(source.stage);
+  let job = source.batch_job_id ? (jobs.get(source.batch_job_id) ?? null) : null;
+  if (!job && source.batch_job_id && !active) {
+    // Finished sources aren't synced; look the job up once anyway so its logs stay viewable.
+    job = (await describeJobs(c.env, [source.batch_job_id]).catch(() => null))?.get(source.batch_job_id) ?? null;
+  }
+  const stream = job?.container?.logStreamName;
+  let lines: LogLine[] | null = null;
+  let logError: string | undefined;
+  if (stream) {
+    try {
+      lines = await logTail(c.env, stream, 200);
+    } catch (err) {
+      logError = err instanceof Error ? err.message : String(err);
+    }
+  }
+  const p = progress(source, clips, events, job);
   return c.html(
-    <Layout title={id} email={c.get("email")} refresh={ACTIVE_STAGES.has(source.stage)}>
+    <Layout title={id} email={c.get("email")} refresh={active}>
       <p class="muted"><a href="/sources">← Sources</a></p>
       <h1 class="row">{id} <Pill v={source.stage} /></h1>
       <p class="muted">
@@ -177,7 +199,9 @@ ui.get("/sources/:id", async (c) => {
         {source.duration ? ` · ${Math.round(source.duration / 60)} min` : ""}
         {source.batch_job_id ? ` · Batch job ${source.batch_job_id}` : ""}
       </p>
+      <ProgressPanel p={p} active={active} job={job} batchError={batchError} />
       {source.error ? <div class="err">{source.error}</div> : null}
+      {source.stage === "failed" || source.stage === "partial" ? <RetryForm id={id} clips={clips.length || 5} /> : null}
       <h2>Clips</h2>
       <ClipGrid clips={clips} />
       <h2>Activity</h2>
@@ -186,8 +210,26 @@ ui.get("/sources/:id", async (c) => {
           {events.map((e) => (<tr><td class="muted" style="width:190px">{e.created_at}</td><td>{e.message}</td></tr>))}
         </tbody>
       </table>
+      <h2>Logs</h2>
+      <LogPanel lines={lines} error={logError} stream={stream} />
     </Layout>,
   );
+});
+
+// Re-run a failed or partial source on the GPU; cloud-run resumes from the work dir checkpointed in S3.
+ui.post("/sources/:id/retry", async (c) => {
+  const id = c.req.param("id");
+  const source = await db.getSource(c.env.DB, id);
+  if (!source) return c.notFound();
+  if (ACTIVE_STAGES.has(source.stage)) return c.redirect(`/sources/${id}`, 303);
+  const clips = Math.min(10, Math.max(1, Number((await c.req.parseBody()).clips) || 5));
+  try {
+    const jobId = await submitBatchJob(c.env, id, clips);
+    await db.setSourceStage(c.env.DB, id, { stage: "queued", batch_job_id: jobId, error: null });
+  } catch (err) {
+    await db.setSourceStage(c.env.DB, id, { stage: "failed", error: `Could not start job: ${String(err)}` });
+  }
+  return c.redirect(`/sources/${id}`, 303);
 });
 
 async function renderClip(c: Context<AppEnv>, id: string, flash?: string) {

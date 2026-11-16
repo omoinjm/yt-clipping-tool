@@ -2,7 +2,7 @@
 # Push dashboard Worker secrets from Infisical (njmtech-clipping, prod) to Cloudflare. Values are never printed.
 #   ACCESS_TEAM_DOMAIN, ACCESS_AUD   (Cloudflare Access verification)
 #   INTERNAL_API_TOKEN  ← CLIPPER_API_TOKEN
-#   AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY ← DASHBOARD_AWS_* (IAM user clipper-dashboard: batch:SubmitJob only)
+#   AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY ← DASHBOARD_AWS_* (IAM user clipper-dashboard: Batch submit/describe + job log reads)
 #   YT_CLIENT_ID / YT_CLIENT_SECRET / YT_REFRESH_TOKEN  (if present in Infisical)
 set -euo pipefail
 cd "$(dirname "$0")/.."

@@ -1,5 +1,3 @@
-import { AwsClient } from "aws4fetch";
-
 export const PERMISSIONS = ["own", "granted", "cc_by"] as const;
 export type Permission = (typeof PERMISSIONS)[number];
 export const VIDEO_EXTS = [".mp4", ".mov", ".mkv", ".webm", ".m4v"];
@@ -55,30 +53,4 @@ export function validate(s: NewSource): string[] {
   }
   if (!(s.clips >= 1 && s.clips <= 10)) errors.push("Clips: 1–10.");
   return errors;
-}
-
-export async function submitBatchJob(env: Env, sourceId: string, clips: number): Promise<string> {
-  if (!env.AWS_ACCESS_KEY_ID || !env.AWS_SECRET_ACCESS_KEY) throw new Error("AWS submit key not configured");
-  const aws = new AwsClient({
-    accessKeyId: env.AWS_ACCESS_KEY_ID,
-    secretAccessKey: env.AWS_SECRET_ACCESS_KEY,
-    region: env.AWS_REGION,
-    service: "batch",
-  });
-  const res = await aws.fetch(`https://batch.${env.AWS_REGION}.amazonaws.com/v1/submitjob`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      jobName: `clipper-${sourceId}`,
-      jobQueue: env.BATCH_JOB_QUEUE,
-      jobDefinition: env.BATCH_JOB_DEFINITION,
-      containerOverrides: {
-        command: ["cloud-run", sourceId],
-        environment: [{ name: "CLIPS_PER_SOURCE", value: String(clips) }],
-      },
-    }),
-  });
-  if (!res.ok) throw new Error(`Batch SubmitJob failed: ${res.status} ${await res.text()}`);
-  const data = await res.json<{ jobId: string }>();
-  return data.jobId;
 }
