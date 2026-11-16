@@ -81,7 +81,7 @@ Claude runs on **Amazon Bedrock** (`eu.anthropic.claude-opus-5-5`) with IAM cred
      - Policy *Allow*: your email (One-time PIN).
      - Policy *Service Auth*: service token `clipper-batch`, saved to Infisical as `CF_ACCESS_CLIENT_*`.
      - Put the team domain and AUD in `wrangler.jsonc` `vars`, then redeploy.
-2. **Infisical**: Organization → Access Control → Identities → create `clipper-batch`.
+2. **Infisical**: identity `clipper-batch` (`<INFISICAL_IDENTITY_ID>`) already exists. To recreate it: Organization → Access Control → Identities → create `clipper-batch`.
    - Auth method **AWS Auth**: allowed account `<AWS_ACCOUNT_ID>`, principal ARN `arn:aws:sts::<AWS_ACCOUNT_ID>:assumed-role/clipper-batch-job/*`.
    - Add it to project `njmtech-clipping` with the **Viewer** role.
 3. **AWS** (`infra/aws/`): `npx cdk deploy -c infisicalIdentityId=<identity id>`, then `./scripts/build-image.sh`.

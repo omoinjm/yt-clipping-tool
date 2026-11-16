@@ -3,7 +3,7 @@
   "context": {
     "apiUrl": "https://<DASHBOARD_HOST>",
     "r2Bucket": "clipper-clips",
-    "infisicalIdentityId": "",
+    "infisicalIdentityId": "<INFISICAL_IDENTITY_ID>",
     "infisicalProjectId": "<INFISICAL_PROJECT_ID>"
   }
 }
