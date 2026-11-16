@@ -11,6 +11,7 @@
     "db:migrate": "wrangler d1 migrations apply clipper --remote"
   },
   "dependencies": {
+    "aws4fetch": "^1.0.20",
     "hono": "4.13.18",
     "jose": "6.1.0"
   },

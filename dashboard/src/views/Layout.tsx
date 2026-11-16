@@ -49,6 +49,7 @@ export function Layout(props: { title: string; email: string; refresh?: boolean;
           <nav>
             <a href="/">Clips</a>
             <a href="/sources">Sources</a>
+            <a href="/sources/new">+ New source</a>
           </nav>
           <span class="me">{props.email}</span>
         </header>

@@ -244,6 +244,15 @@ export class ClipperStack extends Stack {
     });
 
     new CfnOutput(this, "CostGuardTriggerArn", { value: trigger.topicArn });
+    // ── Dashboard "New source" form submits jobs with this user's key (stored in Infisical → Worker secret).
+    const dashboardUser = new iam.User(this, "DashboardSubmitUser", { userName: "clipper-dashboard" });
+    dashboardUser.addToPolicy(
+      new iam.PolicyStatement({
+        actions: ["batch:SubmitJob"],
+        resources: [queue.jobQueueArn, `arn:aws:batch:${this.region}:${this.account}:job-definition/clipper*`],
+      }),
+    );
+
     new CfnOutput(this, "WorkBucketName", { value: work.bucketName });
     new CfnOutput(this, "RepoUri", { value: repo.repositoryUri });
     new CfnOutput(this, "BuildProject", { value: build.projectName });

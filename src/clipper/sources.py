@@ -8,7 +8,10 @@ from pathlib import Path
 
 import yaml
 
-ALLOWED_PERMISSIONS = {"own", "granted"}
+# own: you made it · granted: written permission (proof + credit)
+# cc_by: published under Creative Commons Attribution; credit required, license verified before download
+ALLOWED_PERMISSIONS = {"own", "granted", "cc_by"}
+CC_BY_MARKERS = ("creative commons attribution", "cc by", "cc-by")
 
 
 class PermissionError_(RuntimeError):
@@ -50,8 +53,18 @@ def check_permission(src: Source) -> None:
         )
     if src.permission == "granted" and not (src.proof and src.credit):
         raise PermissionError_(f"source {src.id!r} is 'granted' but is missing `proof` and/or `credit`")
+    if src.permission == "cc_by" and not (src.url and src.credit):
+        raise PermissionError_(f"source {src.id!r} is 'cc_by' but needs a `url` (to verify the license) and `credit`")
     if not (src.path or src.url):
         raise ValueError(f"source {src.id!r} needs `path` or `url`")
+
+
+def is_cc_by(license_text: str | None) -> bool:
+    text = (license_text or "").lower()
+    # Reject NonCommercial / NoDerivatives variants: monetized, edited clips need neither restriction.
+    if any(x in text for x in ("noncommercial", "non-commercial", "-nc", "noderiv", "-nd")):
+        return False
+    return any(m in text for m in CC_BY_MARKERS)
 
 
 def fetch(src: Source, dest_dir: Path) -> Path:
@@ -71,5 +84,12 @@ def fetch(src: Source, dest_dir: Path) -> Path:
         "noprogress": True,
     }
     with yt_dlp.YoutubeDL(opts) as ydl:
+        if src.permission == "cc_by":
+            meta = ydl.extract_info(src.url, download=False)
+            if not is_cc_by(meta.get("license")):
+                raise PermissionError_(
+                    f"source {src.id!r} was marked CC BY, but the video's license is "
+                    f"{meta.get('license') or 'Standard YouTube License'!r}; get permission or pick another video"
+                )
         info = ydl.extract_info(src.url, download=True)
         return Path(ydl.prepare_filename(info)).with_suffix(".mp4")

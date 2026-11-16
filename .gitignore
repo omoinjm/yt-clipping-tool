@@ -11,3 +11,11 @@ sources.yaml
 remotion/node_modules/
 remotion/public/clips/
 remotion/out/
+
+# Downloaded/source videos never belong in git
+*.part
+*.ytdl
+/*.mp4
+/*.mkv
+/*.webm
+/*.mov

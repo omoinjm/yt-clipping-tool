@@ -169,11 +169,15 @@ def cloud_run(source_id: str) -> None:
     try:
         if not (wd / "source.mp4").exists():
             origin = row["origin"]
-            if origin.startswith("s3://"):
+            src = sources_mod.Source(id=source_id, owner=row["owner"], permission=row["permission"],
+                                     url=None if origin.startswith(("s3://", "r2://")) else origin,
+                                     path=origin if origin.startswith(("s3://", "r2://")) else None,
+                                     proof=row.get("proof"), credit=row.get("credit"))
+            sources_mod.check_permission(src)  # re-checked in the job: the dashboard is not trusted blindly
+            if origin.startswith(("s3://", "r2://")):
                 raw = storage.download(origin, wd / ("download" + Path(origin).suffix))
             else:
-                raw = sources_mod.fetch(sources_mod.Source(id=source_id, owner=row["owner"],
-                                                           permission=row["permission"], url=origin), wd)
+                raw = sources_mod.fetch(src, wd)  # verifies the CC BY license for cc_by sources
             pipeline.ingest(state, {k: row[k] for k in ("id", "origin", "owner", "permission", "proof", "credit")}, raw)
             raw.unlink(missing_ok=True)
             checkpoint()

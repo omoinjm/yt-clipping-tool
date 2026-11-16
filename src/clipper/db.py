@@ -13,7 +13,7 @@ CREATE TABLE IF NOT EXISTS sources (
     id          TEXT PRIMARY KEY,
     origin      TEXT NOT NULL,          -- url or local path
     owner       TEXT NOT NULL,
-    permission  TEXT NOT NULL,          -- own | granted
+    permission  TEXT NOT NULL,          -- own | granted | cc_by
     proof       TEXT,
     credit      TEXT,
     duration    REAL,

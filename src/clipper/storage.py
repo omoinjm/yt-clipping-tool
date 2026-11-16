@@ -59,8 +59,13 @@ def upload_source(local: Path, source_id: str) -> str:
 
 
 def download(uri: str, dest: Path) -> Path:
-    bucket, key = parse_s3_uri(uri)
+    """Fetch s3://bucket/key (AWS) or r2://bucket/key (Cloudflare R2, dashboard uploads)."""
     dest.parent.mkdir(parents=True, exist_ok=True)
+    if uri.startswith("r2://"):
+        bucket, _, key = uri[5:].partition("/")
+        r2().download_file(bucket, key, str(dest))
+        return dest
+    bucket, key = parse_s3_uri(uri)
     s3().download_file(bucket, key, str(dest))
     return dest
 

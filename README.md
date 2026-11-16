@@ -89,6 +89,20 @@ Claude runs on **Amazon Bedrock** (`eu.anthropic.claude-sonnet-4-6`; Opus 5.5 on
 
 ### Daily use
 
+**Dashboard (recommended):** open the dashboard → **+ New source**.
+1. Paste a video URL, or upload a file. Uploads go to R2 in 32 MB chunks; any size works, and they're deleted after 30 days.
+2. Pick the rights:
+
+   | Option | When | Needs |
+   |---|---|---|
+   | **I own it** | your own video | — |
+   | **Creative Commons (CC BY)** | the video's license is CC Attribution | URL + credit line. The job **verifies the license** and rejects NC/ND variants and Standard YouTube License videos. |
+   | **Permission granted** | a creator allowed you in writing | proof link + credit line |
+
+3. **Start clipping** queues the GPU job (via the `clipper-dashboard` IAM user, which can only `batch:SubmitJob`). Clips appear under **Clips → To review**.
+
+**CLI (alternative):** register the source in `sources.yaml`, then:
+
 ```bash
 infisical run -- uv run clipper submit ep01   # uploads source, queues GPU job
 infisical run -- uv run clipper jobs          # status (or watch the dashboard)

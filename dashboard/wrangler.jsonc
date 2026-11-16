@@ -15,7 +15,13 @@
     // Leave empty only for `wrangler dev`; production refuses requests without Access when set.
     "ACCESS_TEAM_DOMAIN": "<ACCESS_TEAM_DOMAIN>",
     "ACCESS_AUD": "<ACCESS_AUD>",
-    "YT_CATEGORY_ID": "22"
+    "YT_CATEGORY_ID": "22",
+    // AWS Batch target for the "New source" form (key: secrets AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY).
+    "AWS_REGION": "eu-west-1",
+    "BATCH_JOB_QUEUE": "clipper-gpu",
+    "BATCH_JOB_DEFINITION": "clipper",
+    "R2_BUCKET_NAME": "clipper-clips"
   }
-  // Secrets (wrangler secret put): INTERNAL_API_TOKEN, YT_CLIENT_ID, YT_CLIENT_SECRET, YT_REFRESH_TOKEN
+  // Secrets (scripts/sync-worker-secrets.sh from Infisical): INTERNAL_API_TOKEN, AWS_ACCESS_KEY_ID,
+  // AWS_SECRET_ACCESS_KEY, YT_CLIENT_ID, YT_CLIENT_SECRET, YT_REFRESH_TOKEN
 }

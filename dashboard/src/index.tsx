@@ -3,7 +3,9 @@ import { requireAccess, requireToken, type AppEnv } from "./auth";
 import * as db from "./db";
 import { ClipDetail, ClipGrid } from "./views/Clips";
 import { ACTIVE_STAGES, Layout, Pill } from "./views/Layout";
+import { NewSourceForm } from "./views/NewSource";
 import { SourceTable } from "./views/Sources";
+import { sourceKeyFor, submitBatchJob, validate, type NewSource, type Permission } from "./sources";
 import { uploadToYouTube } from "./youtube";
 
 const app = new Hono<AppEnv>();
@@ -71,10 +73,93 @@ ui.get("/sources", async (c) => {
   const sources = await db.listSources(c.env.DB);
   return c.html(
     <Layout title="Sources" email={c.get("email")} refresh={sources.some((s) => ACTIVE_STAGES.has(s.stage))}>
-      <h1>Sources</h1>
+      <h1 class="row" style="justify-content:space-between">Sources <a class="btn primary" href="/sources/new" style="background:var(--accent);color:#111">+ New source</a></h1>
       <SourceTable sources={sources} />
     </Layout>,
   );
+});
+
+// ── New source: form, chunked upload to R2, then queue the GPU job.
+ui.get("/sources/new", (c) =>
+  c.html(<Layout title="New source" email={c.get("email")}><NewSourceForm /></Layout>),
+);
+
+ui.post("/sources/new", async (c) => {
+  const f = await c.req.parseBody();
+  const str = (k: string) => String(f[k] ?? "").trim();
+  const input: NewSource = {
+    id: str("id").toLowerCase(),
+    kind: str("kind") === "upload" ? "upload" : "url",
+    url: str("url"),
+    uploadKey: str("upload_key"),
+    owner: str("owner"),
+    permission: str("permission") as Permission,
+    proof: str("proof"),
+    credit: str("credit"),
+    clips: Number(str("clips") || 5),
+  };
+  const errors = validate(input);
+  if (!errors.length && (await db.getSource(c.env.DB, input.id))) errors.push(`ID “${input.id}” is already used.`);
+  if (!errors.length && input.kind === "upload" && !(await c.env.CLIPS.head(input.uploadKey)))
+    errors.push("The uploaded file wasn't found; upload it again.");
+  if (errors.length) {
+    return c.html(
+      <Layout title="New source" email={c.get("email")}><NewSourceForm values={input} errors={errors} /></Layout>,
+      400,
+    );
+  }
+  const origin = input.kind === "url" ? input.url : `r2://${c.env.R2_BUCKET_NAME}/${input.uploadKey}`;
+  await db.upsertSource(c.env.DB, input.id, {
+    origin, owner: input.owner, permission: input.permission,
+    proof: input.permission === "granted" ? input.proof : null,
+    credit: input.permission === "own" ? input.credit || null : input.credit,
+    stage: "queued", error: null,
+  });
+  try {
+    const jobId = await submitBatchJob(c.env, input.id, input.clips);
+    await db.setSourceStage(c.env.DB, input.id, { stage: "queued", batch_job_id: jobId });
+  } catch (err) {
+    await db.setSourceStage(c.env.DB, input.id, { stage: "failed", error: `Could not start job: ${String(err)}` });
+  }
+  return c.redirect(`/sources/${input.id}`, 303);
+});
+
+// Multipart upload into R2 through the binding: no R2 keys in the browser, no size limit beyond R2's.
+ui.post("/uploads", async (c) => {
+  const { id, filename, contentType } = await c.req.json<{ id: string; filename: string; contentType: string }>();
+  const key = sourceKeyFor(String(id).toLowerCase(), String(filename));
+  if (!key) return c.json({ error: "bad id or file type" }, 400);
+  if (await db.getSource(c.env.DB, String(id).toLowerCase())) return c.json({ error: "ID already used" }, 409);
+  const mpu = await c.env.CLIPS.createMultipartUpload(key, { httpMetadata: { contentType: contentType || "video/mp4" } });
+  return c.json({ key: mpu.key, uploadId: mpu.uploadId });
+});
+
+ui.put("/uploads/part", async (c) => {
+  const key = c.req.query("key") ?? "";
+  const uploadId = c.req.query("uploadId") ?? "";
+  const part = Number(c.req.query("part"));
+  const len = Number(c.req.header("content-length"));
+  if (!key.startsWith("sources/") || !uploadId || !(part >= 1 && part <= 10000) || !c.req.raw.body || !(len > 0))
+    return c.json({ error: "bad part" }, 400);
+  // Stream the chunk straight through with its known length (no buffering in Worker memory).
+  const { readable, writable } = new FixedLengthStream(len);
+  const pump = c.req.raw.body.pipeTo(writable);
+  const uploaded = await c.env.CLIPS.resumeMultipartUpload(key, uploadId).uploadPart(part, readable);
+  await pump;
+  return c.json(uploaded);
+});
+
+ui.post("/uploads/complete", async (c) => {
+  const { key, uploadId, parts } = await c.req.json<{ key: string; uploadId: string; parts: R2UploadedPart[] }>();
+  if (!key.startsWith("sources/")) return c.json({ error: "bad key" }, 400);
+  await c.env.CLIPS.resumeMultipartUpload(key, uploadId).complete(parts);
+  return c.json({ ok: true });
+});
+
+ui.post("/uploads/abort", async (c) => {
+  const { key, uploadId } = await c.req.json<{ key: string; uploadId: string }>();
+  if (key.startsWith("sources/")) await c.env.CLIPS.resumeMultipartUpload(key, uploadId).abort();
+  return c.json({ ok: true });
 });
 
 ui.get("/sources/:id", async (c) => {
