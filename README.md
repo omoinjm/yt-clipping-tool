@@ -56,7 +56,10 @@ dashboard (Cloudflare Worker + Access login) ◀── D1 + R2 ── review, ed
 
 ### Secrets: Infisical
 
-All secrets live in the Infisical project **njmtech-clipping** (`.infisical.json`), in the `prod` and `dev` environments.
+All secrets and account-specific IDs live in the Infisical project **njmtech-clipping**, in the `prod` and `dev` environments. Run `infisical init` once to link your checkout; `.infisical.json` is git-ignored. Nothing account-specific is tracked in git:
+- AWS account ID, alert email, Cloudflare account ID, D1 ID, Access domain and AUD, Infisical IDs and the dashboard URL are all in Infisical
+- `infra/aws` reads them from the environment
+- `dashboard/wrangler.jsonc` is rendered from a template
 - **Locally:** prefix commands with `infisical run --`.
 - **In Batch:** the container logs in as the machine identity **clipper-batch** using **AWS IAM auth**, trusting the role `clipper-batch-job`, so no Infisical credential is stored anywhere (`docker-entrypoint.sh`).
 - **Dashboard Worker:** `scripts/sync-worker-secrets.sh` pushes its secrets from Infisical to Cloudflare.
@@ -73,18 +76,17 @@ Claude runs on **Amazon Bedrock** (`eu.anthropic.claude-sonnet-4-6`; Opus 5.5 on
 
 ### One-time setup
 
-1. **Cloudflare** (`dashboard/`):
-   - D1 `clipper` and R2 `clipper-clips` already exist.
-   - Run `npm run db:migrate` after schema changes and `npx wrangler deploy` to ship.
+1. **Cloudflare** (`dashboard/`): config is rendered from `wrangler.template.jsonc` with IDs from Infisical.
+   - `./scripts/dashboard.sh deploy` ships the Worker. `./scripts/dashboard.sh migrate` applies D1 migrations, and `./scripts/dashboard.sh dev` runs it locally.
    - `./scripts/sync-worker-secrets.sh` after changing Worker secrets in Infisical.
    - Zero Trust → Access → Applications: a self-hosted app on the Worker hostname.
      - Policy *Allow*: your email (One-time PIN).
      - Policy *Service Auth*: service token `clipper-batch`, saved to Infisical as `CF_ACCESS_CLIENT_*`.
-     - Put the team domain and AUD in `wrangler.jsonc` `vars`, then redeploy.
-2. **Infisical**: identity `clipper-batch` (`<INFISICAL_IDENTITY_ID>`) already exists. To recreate it: Organization → Access Control → Identities → create `clipper-batch`.
-   - Auth method **AWS Auth**: allowed account `<AWS_ACCOUNT_ID>`, principal ARN `arn:aws:sts::<AWS_ACCOUNT_ID>:assumed-role/clipper-batch-job/*`.
+     - Save the team domain and the app's AUD in Infisical as `ACCESS_TEAM_DOMAIN` / `ACCESS_AUD`, then run `scripts/sync-worker-secrets.sh`.
+2. **Infisical**: Organization → Access Control → Identities → create `clipper-batch` (store its ID in Infisical as `INFISICAL_IDENTITY_ID`).
+   - Auth method **AWS Auth**: allowed account `<AWS_ACCOUNT_ID>`, principal ARN `arn:aws:sts::<AWS_ACCOUNT_ID>:assumed-role/clipper-batch-job`.
    - Add it to project `njmtech-clipping` with the **Viewer** role.
-3. **AWS** (`infra/aws/`): `npx cdk deploy -c infisicalIdentityId=<identity id>`, then `./scripts/build-image.sh`.
+3. **AWS** (`infra/aws/`): `infisical run --env prod -- npx cdk deploy`, then `./scripts/build-image.sh`.
    - The G/VT Spot quota must be ≥ 8 vCPU (16 requested).
 
 ### Daily use

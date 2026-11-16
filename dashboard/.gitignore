@@ -1,3 +1,5 @@
 .dev.vars
 node_modules/
 .wrangler/
+# Rendered from wrangler.template.jsonc by scripts/dashboard.sh
+wrangler.jsonc

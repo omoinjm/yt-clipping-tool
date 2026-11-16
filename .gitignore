@@ -19,3 +19,6 @@ remotion/out/
 /*.mkv
 /*.webm
 /*.mov
+
+# Local Infisical link (run `infisical init` and pick project njmtech-clipping)
+.infisical.json

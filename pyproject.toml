@@ -2,9 +2,7 @@
 name = "clipper"
 version = "0.1.0"
 description = "Long-form video to YouTube Shorts clipping pipeline"
-authors = [
-    { name = "omoinjm", email = "<AUTHOR_EMAIL>" }
-]
+authors = [{ name = "omoinjm" }]
 requires-python = ">=3.12"
 dependencies = [
     "anthropic>=2.8.0",
