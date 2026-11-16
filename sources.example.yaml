@@ -1,0 +1,14 @@
+# Every source must declare permission: own | granted.
+# "granted" sources also need `proof` (link/path to written permission) and `credit` (shown in the description).
+sources:
+  - id: ep01
+    path: ~/Videos/podcast-ep01.mp4
+    owner: NJM Tech
+    permission: own
+
+  - id: guest-stream-01
+    url: https://www.youtube.com/watch?v=XXXXXXXXXXX
+    owner: Some Creator
+    permission: granted
+    proof: https://drive.example.com/permission-email.pdf
+    credit: "@somecreator on YouTube"

@@ -1,0 +1,16 @@
+.venv
+.git
+work
+models
+clipper.db
+.env
+.yt_token.json
+client_secret*.json
+sources.yaml
+**/__pycache__
+remotion/node_modules
+remotion/public/clips
+remotion/out
+dashboard
+infra
+tests

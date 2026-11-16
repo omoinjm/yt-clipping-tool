@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+work/
+models/
+clipper.db
+client_secret*.json
+.yt_token.json
+sources.yaml
+remotion/node_modules/
+remotion/public/clips/
+remotion/out/
