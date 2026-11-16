@@ -7,6 +7,7 @@ then emails the owner with teardown instructions.
 """
 import json
 import os
+from datetime import datetime, timezone
 
 import boto3
 
@@ -18,16 +19,41 @@ TOPIC = os.environ["ALERT_TOPIC"]
 CREDIT_FLOOR = float(os.environ.get("CREDIT_FLOOR_USD", "5"))
 
 
-def remaining_credits():
+def credit_state():
+    """(remaining_usd, expiry_datetime) from the Free-plan API, or (None, None) if unavailable."""
     try:
         state = boto3.client("freetier", region_name="us-east-1").get_account_plan_state()
-        return float(state.get("accountPlanRemainingCredits", {}).get("amount", 0.0))
+        amount = float(state.get("accountPlanRemainingCredits", {}).get("amount", 0.0))
+        return amount, state.get("accountPlanExpirationDate")
     except Exception as e:  # API unavailable after plan changes → don't trip on errors
         print(json.dumps({"msg": "credit check failed", "error": str(e)}))
-        return None
+        return None, None
 
 
-def stop_everything(reason):
+TEARDOWN_STEPS = """\
+YOUR AWS CREDITS ARE {what}. Nothing is processing anymore, but storage, logs and the
+image registry still cost a little every month until you delete them.
+
+To delete everything and close the account:
+
+  1. On your machine, in the project folder:
+       cd ~/dev/github/projects/njmtech-clipping
+       aws login
+       ./scripts/teardown.sh --cloudflare
+     (type "delete everything" when asked; it removes all AWS resources, the
+      dashboard Worker, its D1 database and the R2 clips)
+
+  2. Close the AWS account (console only):
+       sign in as root -> account menu (top right) -> Account -> Close account
+
+  3. Optional: delete the Infisical project 'njmtech-clipping' and identity 'clipper-batch'.
+
+Download any clips you want to keep from the dashboard BEFORE step 1.
+You'll get this reminder daily until the teardown is done.
+"""
+
+
+def stop_everything(reason, credits_gone=None):
     errors = []
 
     def step(name, fn):
@@ -49,12 +75,17 @@ def stop_everything(reason):
     # Disabled + max 0 vCPU: Batch scales the environment to zero and won't launch instances.
     step("disable compute", lambda: batch.update_compute_environment(
         computeEnvironment=CE, state="DISABLED", computeResources={"minvCpus": 0, "maxvCpus": 0}))
-    sns.publish(TopicArn=TOPIC, Subject="Clipper cost guard: GPU processing STOPPED",
-                Message=(f"Reason: {reason}\nCancelled jobs: {cancelled}\n"
-                         f"Errors: {errors or 'none'}\n\n"
-                         "GPU queue and compute are disabled; no further GPU spend.\n"
-                         "To delete everything: ./scripts/teardown.sh (then close the account in the console).\n"
-                         "To resume instead: ./scripts/resume.sh"))
+    status = (f"Reason: {reason}\nCancelled jobs: {cancelled}\nErrors: {errors or 'none'}\n"
+              "GPU queue and compute are disabled; no further GPU spend.\n\n")
+    if credits_gone:
+        subject = f"ACTION NEEDED: AWS credits {credits_gone} - run scripts/teardown.sh"
+        body = TEARDOWN_STEPS.format(what=credits_gone.upper()) + "\n---\n" + status
+    else:
+        subject = "Clipper cost guard: GPU processing STOPPED (budget cap)"
+        body = (status + "This month's real spend passed the $20 budget.\n"
+                "To resume: ./scripts/resume.sh\n"
+                "To delete everything instead: ./scripts/teardown.sh --cloudflare, then close the account in the console.")
+    sns.publish(TopicArn=TOPIC, Subject=subject[:100], Message=body)
     print(json.dumps({"msg": "stopped", "reason": reason, "cancelled": cancelled, "errors": errors}))
 
 
@@ -62,7 +93,14 @@ def handler(event, context):
     if "Records" in event:  # SNS from AWS Budgets
         stop_everything("monthly budget cap reached (real card spend)")
         return
-    credits = remaining_credits()
-    print(json.dumps({"msg": "daily credit check", "remaining_usd": credits}))
-    if credits is not None and credits < CREDIT_FLOOR:
-        stop_everything(f"AWS credits nearly exhausted (${credits:.2f} left)")
+    credits, expiry = credit_state()
+    print(json.dumps({"msg": "daily credit check", "remaining_usd": credits, "expires": str(expiry)}))
+    if credits is None:
+        return
+    if expiry is not None:
+        exp = expiry if isinstance(expiry, datetime) else datetime.fromisoformat(str(expiry).replace("Z", "+00:00"))
+        if exp <= datetime.now(timezone.utc):
+            stop_everything(f"AWS credits expired on {exp:%Y-%m-%d}", credits_gone="expired")
+            return
+    if credits < CREDIT_FLOOR:
+        stop_everything(f"AWS credits nearly exhausted (${credits:.2f} left)", credits_gone="depleted")
