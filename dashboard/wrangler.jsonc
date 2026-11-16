@@ -13,8 +13,8 @@
   "vars": {
     // Cloudflare Access: team domain (e.g. "myteam.cloudflareaccess.com") and the app's AUD tag.
     // Leave empty only for `wrangler dev`; production refuses requests without Access when set.
-    "ACCESS_TEAM_DOMAIN": "",
-    "ACCESS_AUD": "",
+    "ACCESS_TEAM_DOMAIN": "<ACCESS_TEAM_DOMAIN>",
+    "ACCESS_AUD": "<ACCESS_AUD>",
     "YT_CATEGORY_ID": "22"
   }
   // Secrets (wrangler secret put): INTERNAL_API_TOKEN, YT_CLIENT_ID, YT_CLIENT_SECRET, YT_REFRESH_TOKEN
