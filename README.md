@@ -89,6 +89,24 @@ Claude runs on **Amazon Bedrock** (`eu.anthropic.claude-sonnet-4-6`; Opus 5.5 on
 3. **AWS** (`infra/aws/`): `infisical run --env prod -- npx cdk deploy`, then `./scripts/build-image.sh`.
    - The G/VT Spot quota must be ≥ 8 vCPU (16 requested).
 
+### Deploying the dashboard
+
+Pushes to `main` deploy the Worker through Cloudflare Workers Builds (Workers & Pages → `clipper-dashboard` → Settings → Build):
+
+| Setting | Value |
+|---|---|
+| Root directory | `dashboard` |
+| Build command | `python3 ../scripts/render-wrangler.py` |
+| Deploy command | `npx wrangler deploy` |
+| Build variables | `CLOUDFLARE_ACCOUNT_ID`, `D1_DATABASE_ID` (same values as Infisical) |
+| Build watch paths | `dashboard/*`, `scripts/render-wrangler.py` |
+
+- The two IDs must be **build** variables (the Variables and secrets section under Build), not Worker runtime variables. `render-wrangler.py` fills `wrangler.template.jsonc` from them.
+- The build deploys code only. Still run by hand:
+  - `./scripts/dashboard.sh migrate` for new D1 migrations, before pushing code that needs them.
+  - `./scripts/sync-worker-secrets.sh` after changing Worker secrets in Infisical.
+- `./scripts/dashboard.sh deploy` still works for a manual deploy.
+
 ### Daily use
 
 **Dashboard (recommended):** open the dashboard → **+ New source**.
