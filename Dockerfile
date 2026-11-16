@@ -20,6 +20,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
        | tar -xJ -C /opt && mv /opt/node-v${NODE_VERSION}-linux-x64 /opt/node
 
 COPY --from=ghcr.io/astral-sh/uv:0.9.21 /uv /usr/local/bin/uv
+# Infisical CLI: secrets are fetched at container start (docker-entrypoint.sh).
+RUN npm install -g --no-fund --no-audit @infisical/cli@0.45.8 && infisical --version
 WORKDIR /app
 
 # Python deps first (cached layer).
@@ -43,5 +45,6 @@ RUN uv sync --frozen --no-dev --python python3.12 && auto-editor --version
 
 ENV WHISPER_MODEL=large-v3 WHISPER_BATCH_SIZE=16 WHISPER_DEVICE=auto \
     CLIPPER_STATE=api CLIPPER_WORK_DIR=/scratch/work
-ENTRYPOINT ["clipper"]
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 CMD ["--help"]

@@ -56,23 +56,32 @@ def format_transcript(transcript: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def ask_claude(transcript: dict[str, Any], n: int) -> list[dict[str, Any]]:
+def _create(system: str, user: str):
+    """One structured-output request, on Bedrock (default) or the Claude API."""
     import anthropic
 
-    client = anthropic.Anthropic()
+    request = dict(
+        model=settings.anthropic_model,
+        max_tokens=16000,
+        system=system,
+        output_config={"effort": "medium", "format": {"type": "json_schema", "schema": CANDIDATE_SCHEMA}},
+        messages=[{"role": "user", "content": user}],
+    )
+    if settings.claude_provider == "bedrock":
+        # InvokeModel endpoint; credentials from the AWS chain (IAM role in Batch, `aws login` locally).
+        return anthropic.AnthropicBedrock(aws_region=settings.aws_region).messages.create(**request)
+    # First-party API: server-side refusal fallback (not available on Bedrock).
+    return anthropic.Anthropic().beta.messages.create(
+        **request, betas=["server-side-fallback-2026-07-01"], fallbacks="default"
+    )
+
+
+def ask_claude(transcript: dict[str, Any], n: int) -> list[dict[str, Any]]:
     user = (
         f"Find up to {n * 2} candidate Shorts, each {settings.min_clip_s:.0f}-{settings.max_clip_s:.0f} "
         f"seconds long, best first.\n\n<transcript>\n{format_transcript(transcript)}\n</transcript>"
     )
-    response = client.beta.messages.create(
-        model=settings.anthropic_model,
-        max_tokens=16000,
-        betas=["server-side-fallback-2026-07-01"],
-        fallbacks="default",
-        system=SYSTEM_PROMPT,
-        output_config={"effort": "medium", "format": {"type": "json_schema", "schema": CANDIDATE_SCHEMA}},
-        messages=[{"role": "user", "content": user}],
-    )
+    response = _create(SYSTEM_PROMPT, user)
     if response.stop_reason == "refusal":
         raise RuntimeError(f"Claude declined clip selection: {response.stop_details}")
     if response.stop_reason == "max_tokens":

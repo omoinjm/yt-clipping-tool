@@ -35,7 +35,16 @@ class Settings:
     hf_token: str | None = field(default_factory=lambda: _env("HF_TOKEN"))
 
     # Selection
-    anthropic_model: str = field(default_factory=lambda: _env("ANTHROPIC_MODEL", "claude-opus-5-5"))
+    # bedrock (default; billed through AWS, IAM auth) or anthropic (needs ANTHROPIC_API_KEY)
+    claude_provider: str = field(default_factory=lambda: _env("CLAUDE_PROVIDER", "bedrock"))
+    aws_region: str = field(default_factory=lambda: _env("AWS_REGION", _env("AWS_DEFAULT_REGION", "eu-west-1")))
+    anthropic_model: str = field(
+        default_factory=lambda: _env(
+            "ANTHROPIC_MODEL",
+            # Bedrock serves Opus 5.5 through the EU cross-region inference profile.
+            "eu.anthropic.claude-opus-5-5" if _env("CLAUDE_PROVIDER", "bedrock") == "bedrock" else "claude-opus-5-5",
+        )
+    )
     min_clip_s: float = 20.0
     max_clip_s: float = 60.0
     clips_per_source: int = field(default_factory=lambda: int(_env("CLIPS_PER_SOURCE", "5")))

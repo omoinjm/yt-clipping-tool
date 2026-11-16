@@ -18,7 +18,7 @@ source ──ffmpeg──▶ source.mp4 + audio.wav
 ```bash
 uv sync                                  # Python deps (WhisperX pulls in torch, which is large)
 (cd remotion && npm install)             # Remotion
-cp .env.example .env                     # add ANTHROPIC_API_KEY (or run `ant auth login`)
+cp .env.example .env                     # non-secret config; secrets come from Infisical
 cp sources.example.yaml sources.yaml     # register your videos
 ```
 
@@ -49,33 +49,49 @@ dashboard (Cloudflare Worker + Access login) ◀── D1 + R2 ── review, ed
 
 | Path | What |
 |---|---|
-| `infra/aws/` | CDK stack: VPC (no NAT), S3 work bucket, ECR, CodeBuild image build, Batch Spot GPU, `clipper/runtime` secret, `ClipperSubmit` IAM policy |
+| `infra/aws/` | CDK stack: VPC (no NAT), S3 work bucket, ECR, CodeBuild image build, Batch Spot GPU, Bedrock-enabled job role, `ClipperSubmit` IAM policy |
 | `Dockerfile` | CUDA 12.8 + cuDNN, FFmpeg (NVENC), Node 24 + Remotion + Chrome, WhisperX models baked in |
 | `scripts/build-image.sh` | zip → S3 → CodeBuild → ECR (the ~10 GB image is built in AWS) |
 | `dashboard/` | Worker (Hono): D1 `clipper`, R2 `clipper-clips`, Access JWT check, `/api/internal/*` for CLI/jobs |
 
+### Secrets: Infisical
+
+All secrets live in the Infisical project **njmtech-clipping** (`.infisical.json`), in the `prod` and `dev` environments.
+- **Locally:** prefix commands with `infisical run --`.
+- **In Batch:** the container logs in as the machine identity **clipper-batch** using **AWS IAM auth**, trusting the role `clipper-batch-job`, so no Infisical credential is stored anywhere (`docker-entrypoint.sh`).
+- **Dashboard Worker:** `scripts/sync-worker-secrets.sh` pushes its secrets from Infisical to Cloudflare.
+
+| Key | Used by |
+|---|---|
+| `CLIPPER_API_TOKEN` | CLI + job → dashboard internal API (synced to the Worker as `INTERNAL_API_TOKEN`) |
+| `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_ACCOUNT_ID` | job → R2 clip uploads |
+| `CF_ACCESS_CLIENT_ID`, `CF_ACCESS_CLIENT_SECRET` | CLI + job → through Cloudflare Access |
+| `HF_TOKEN` | `--diarize` (pyannote) |
+| `YT_CLIENT_ID`, `YT_CLIENT_SECRET`, `YT_REFRESH_TOKEN` | dashboard "Upload to YouTube" (from `clipper youtube-auth`) |
+
+Claude runs on **Amazon Bedrock** (`eu.anthropic.claude-opus-5-5`) with IAM credentials, so no API key is needed. The account must first submit Anthropic's use-case form once: Bedrock console → Model catalog → any Claude model.
+
 ### One-time setup
 
-1. **Cloudflare**: `cd dashboard && npm install && npx wrangler login`
-   - `npx wrangler d1 create clipper` → paste `database_id` into `wrangler.jsonc`; `npm run db:migrate`
-   - `npx wrangler r2 bucket create clipper-clips`
-   - `npx wrangler secret put INTERNAL_API_TOKEN` (random: `openssl rand -hex 32`); `npx wrangler deploy`
-   - Zero Trust → Access → Applications: self-hosted app on the Worker hostname. Policy 1: *Allow* your email (One-time PIN).
-     Policy 2: *Service Auth* with a new service token (→ `CF_ACCESS_CLIENT_ID/SECRET`). Put the team domain + app AUD in `wrangler.jsonc` `vars`, redeploy.
-   - R2 → Manage API tokens: Object Read & Write on `clipper-clips` (→ `R2_ACCESS_KEY_ID/SECRET`).
-2. **AWS**: `cd infra/aws && npm install && npx cdk bootstrap && npx cdk deploy -c apiUrl=https://<your worker URL>`
-   - Fill the `clipper/runtime` secret (all keys) in Secrets Manager.
-   - Service Quotas → EC2 → *All G and VT Spot Instance Requests* ≥ 16 vCPU.
-   - Attach the `ClipperSubmit` policy to the identity you use for the CLI.
-   - `./scripts/build-image.sh`
-3. **CLI**: fill the cloud section of `.env`. YouTube from the dashboard: `uv run clipper youtube-auth`, then store the
-   three `YT_*` values with `npx wrangler secret put` in `dashboard/`.
+1. **Cloudflare** (`dashboard/`):
+   - D1 `clipper` and R2 `clipper-clips` already exist.
+   - Run `npm run db:migrate` after schema changes and `npx wrangler deploy` to ship.
+   - `./scripts/sync-worker-secrets.sh` after changing Worker secrets in Infisical.
+   - Zero Trust → Access → Applications: a self-hosted app on the Worker hostname.
+     - Policy *Allow*: your email (One-time PIN).
+     - Policy *Service Auth*: service token `clipper-batch`, saved to Infisical as `CF_ACCESS_CLIENT_*`.
+     - Put the team domain and AUD in `wrangler.jsonc` `vars`, then redeploy.
+2. **Infisical**: Organization → Access Control → Identities → create `clipper-batch`.
+   - Auth method **AWS Auth**: allowed account `<AWS_ACCOUNT_ID>`, principal ARN `arn:aws:sts::<AWS_ACCOUNT_ID>:assumed-role/clipper-batch-job/*`.
+   - Add it to project `njmtech-clipping` with the **Viewer** role.
+3. **AWS** (`infra/aws/`): `npx cdk deploy -c infisicalIdentityId=<identity id>`, then `./scripts/build-image.sh`.
+   - The G/VT Spot quota must be ≥ 8 vCPU (16 requested).
 
 ### Daily use
 
 ```bash
-uv run clipper submit ep01      # uploads source, queues GPU job
-uv run clipper jobs             # status (or watch the dashboard)
+infisical run -- uv run clipper submit ep01   # uploads source, queues GPU job
+infisical run -- uv run clipper jobs          # status (or watch the dashboard)
 ```
 
 Cost: you pay only while a job runs. A Spot g6.2xlarge costs about $0.3–0.5/h, and a 1-hour source takes roughly 10–15 min. R2 storage is about $0.015/GB-month, with free egress.

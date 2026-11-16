@@ -1,4 +1,4 @@
-import { CfnOutput, Duration, RemovalPolicy, SecretValue, Size, Stack, type StackProps } from "aws-cdk-lib";
+import { CfnOutput, Duration, RemovalPolicy, Size, Stack, type StackProps } from "aws-cdk-lib";
 import * as batch from "aws-cdk-lib/aws-batch";
 import * as codebuild from "aws-cdk-lib/aws-codebuild";
 import * as ec2 from "aws-cdk-lib/aws-ec2";
@@ -7,25 +7,19 @@ import * as ecs from "aws-cdk-lib/aws-ecs";
 import * as iam from "aws-cdk-lib/aws-iam";
 import * as logs from "aws-cdk-lib/aws-logs";
 import * as s3 from "aws-cdk-lib/aws-s3";
-import * as secretsmanager from "aws-cdk-lib/aws-secretsmanager";
 import type { Construct } from "constructs";
 
 export interface ClipperStackProps extends StackProps {
   /** Dashboard Worker base URL, e.g. https://clipper-dashboard.<sub>.workers.dev */
   apiUrl: string;
   r2Bucket: string;
+  /** Infisical machine identity (AWS IAM auth) the job uses to read secrets; empty disables Infisical. */
+  infisicalIdentityId: string;
+  infisicalProjectId: string;
 }
 
-/** Keys the job reads from the `clipper/runtime` secret (JSON). Fill them in after deploy. */
-const RUNTIME_SECRET_KEYS = [
-  "ANTHROPIC_API_KEY",
-  "R2_ACCOUNT_ID",
-  "R2_ACCESS_KEY_ID",
-  "R2_SECRET_ACCESS_KEY",
-  "CLIPPER_API_TOKEN",
-  "CF_ACCESS_CLIENT_ID",
-  "CF_ACCESS_CLIENT_SECRET",
-] as const;
+/** Bedrock model the job may invoke (EU cross-region inference profile + its regional foundation models). */
+const BEDROCK_MODEL = "anthropic.claude-opus-5-5";
 
 export class ClipperStack extends Stack {
   constructor(scope: Construct, id: string, props: ClipperStackProps) {
@@ -126,16 +120,21 @@ export class ClipperStack extends Stack {
       computeEnvironments: [{ computeEnvironment: computeEnv, order: 1 }],
     });
 
-    const runtimeSecret = new secretsmanager.Secret(this, "RuntimeSecret", {
-      secretName: "clipper/runtime",
-      description: "Clipper job secrets (JSON). Fill every key after first deploy.",
-      secretObjectValue: Object.fromEntries(
-        RUNTIME_SECRET_KEYS.map((k) => [k, SecretValue.unsafePlainText("CHANGE_ME")]), // placeholders only
-      ),
+    // Fixed name: Infisical's AWS IAM auth trusts arn:aws:sts::<account>:assumed-role/clipper-batch-job/*
+    const jobRole = new iam.Role(this, "JobRole", {
+      roleName: "clipper-batch-job",
+      assumedBy: new iam.ServicePrincipal("ecs-tasks.amazonaws.com"),
     });
-
-    const jobRole = new iam.Role(this, "JobRole", { assumedBy: new iam.ServicePrincipal("ecs-tasks.amazonaws.com") });
     work.grantReadWrite(jobRole);
+    jobRole.addToPolicy(
+      new iam.PolicyStatement({
+        actions: ["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream"],
+        resources: [
+          `arn:aws:bedrock:${this.region}:${this.account}:inference-profile/eu.${BEDROCK_MODEL}`,
+          `arn:aws:bedrock:*::foundation-model/${BEDROCK_MODEL}`,
+        ],
+      }),
+    );
 
     const container = new batch.EcsEc2ContainerDefinition(this, "Container", {
       image: ecs.ContainerImage.fromEcrRepository(repo, "latest"),
@@ -150,10 +149,13 @@ export class ClipperStack extends Stack {
         R2_BUCKET: props.r2Bucket,
         AWS_REGION: this.region,
         REMOTION_CONCURRENCY: "6",
+        CLAUDE_PROVIDER: "bedrock",
+        ANTHROPIC_MODEL: `eu.${BEDROCK_MODEL}`,
+        // Secrets come from Infisical at container start (see docker-entrypoint.sh).
+        INFISICAL_IDENTITY_ID: props.infisicalIdentityId,
+        INFISICAL_PROJECT_ID: props.infisicalProjectId,
+        INFISICAL_ENV: "prod",
       },
-      secrets: Object.fromEntries(
-        RUNTIME_SECRET_KEYS.map((k) => [k, batch.Secret.fromSecretsManager(runtimeSecret, k)]),
-      ),
       linuxParameters: new batch.LinuxParameters(this, "LinuxParams", { sharedMemorySize: Size.gibibytes(4) }),
       volumes: [batch.EcsVolume.host({ name: "scratch", hostPath: "/scratch", containerPath: "/scratch" })],
       logging: ecs.LogDriver.awsLogs({
@@ -161,7 +163,6 @@ export class ClipperStack extends Stack {
         logGroup: new logs.LogGroup(this, "JobLogs", { logGroupName: "/clipper/jobs", retention: logs.RetentionDays.ONE_MONTH }),
       }),
     });
-    // Secrets resolve under CLIPPER_API_TOKEN; the CLI code reads CLIPPER_API_TOKEN, so names match.
 
     const jobDef = new batch.EcsJobDefinition(this, "JobDef", {
       jobDefinitionName: "clipper",
@@ -195,7 +196,7 @@ export class ClipperStack extends Stack {
     new CfnOutput(this, "BuildProject", { value: build.projectName });
     new CfnOutput(this, "JobQueueName", { value: queue.jobQueueName });
     new CfnOutput(this, "JobDefinitionName", { value: "clipper" });
-    new CfnOutput(this, "RuntimeSecretName", { value: runtimeSecret.secretName });
+    new CfnOutput(this, "JobRoleArn", { value: jobRole.roleArn });
     new CfnOutput(this, "SubmitPolicyArn", { value: submitPolicy.managedPolicyArn });
     void jobDef;
   }

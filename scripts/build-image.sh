@@ -12,7 +12,7 @@ PROJECT=$(out BuildProject)
 ZIP=$(mktemp -d)/source.zip
 python3 - "$ZIP" <<'PY'
 import sys, zipfile, pathlib
-paths = ["Dockerfile", ".dockerignore", "pyproject.toml", "uv.lock", ".python-version", "README.md", "src",
+paths = ["Dockerfile", ".dockerignore", "docker-entrypoint.sh", "pyproject.toml", "uv.lock", ".python-version", "README.md", "src",
          "remotion/package.json", "remotion/package-lock.json", "remotion/tsconfig.json",
          "remotion/remotion.config.ts", "remotion/src"]
 with zipfile.ZipFile(sys.argv[1], "w", zipfile.ZIP_DEFLATED) as z:

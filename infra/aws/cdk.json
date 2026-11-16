@@ -2,6 +2,8 @@
   "app": "npx tsx bin/app.ts",
   "context": {
     "apiUrl": "https://<DASHBOARD_HOST>",
-    "r2Bucket": "clipper-clips"
+    "r2Bucket": "clipper-clips",
+    "infisicalIdentityId": "",
+    "infisicalProjectId": "<INFISICAL_PROJECT_ID>"
   }
 }
