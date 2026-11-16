@@ -96,6 +96,21 @@ infisical run -- uv run clipper jobs          # status (or watch the dashboard)
 
 Cost: you pay only while a job runs. A Spot g6.2xlarge costs about $0.3–0.5/h, and a 1-hour source takes roughly 10–15 min. R2 storage is about $0.015/GB-month, with free egress.
 
+### Cost guard and teardown
+
+There's no hard cap in AWS, so the stack enforces one.
+
+**Budget `clipper-monthly`:** $20/month of **real card spend** (credits are netted out).
+- Emails at 80%, at 100%, and when the forecast passes 100%.
+
+**Kill switch (Lambda `clipper-cost-guard`):** runs at 100% of actual spend, and daily at 06:00 UTC if Free-plan credits drop below $5.
+- Disables the GPU queue and compute environment, cancels all jobs, and emails `clipper-cost-guard`.
+- Confirm that SNS email subscription once.
+
+**Scripts:**
+- `./scripts/resume.sh` turns processing back on after the kill switch fires.
+- `./scripts/teardown.sh [--cloudflare]` deletes every AWS resource (stack, retained bucket/ECR/logs, budget, CDK bootstrap), plus optionally the Worker/D1/R2. Closing the AWS account is a console step (root → Account → Close account), printed at the end.
+
 ## Rights and monetization
 
 - `ingest` refuses any source that isn't `permission: own` or `granted`. `granted` also needs `proof` and `credit`, and the credit is added to the description.

@@ -5,7 +5,13 @@ import * as ec2 from "aws-cdk-lib/aws-ec2";
 import * as ecr from "aws-cdk-lib/aws-ecr";
 import * as ecs from "aws-cdk-lib/aws-ecs";
 import * as iam from "aws-cdk-lib/aws-iam";
+import * as events from "aws-cdk-lib/aws-events";
+import * as targets from "aws-cdk-lib/aws-events-targets";
+import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as logs from "aws-cdk-lib/aws-logs";
+import * as sns from "aws-cdk-lib/aws-sns";
+import * as snsSubs from "aws-cdk-lib/aws-sns-subscriptions";
+import * as path from "node:path";
 import * as s3 from "aws-cdk-lib/aws-s3";
 import type { Construct } from "constructs";
 
@@ -16,6 +22,8 @@ export interface ClipperStackProps extends StackProps {
   /** Infisical machine identity (AWS IAM auth) the job uses to read secrets; empty disables Infisical. */
   infisicalIdentityId: string;
   infisicalProjectId: string;
+  /** Email for cost-guard notices. */
+  alertEmail: string;
 }
 
 /** Bedrock model the job uses (EU cross-region inference profile). Opus 5.5 is gated on this account for now. */
@@ -53,7 +61,7 @@ export class ClipperStack extends Stack {
     const repo = new ecr.Repository(this, "Repo", {
       repositoryName: "clipper",
       imageScanOnPush: true,
-      lifecycleRules: [{ maxImageCount: 5 }],
+      lifecycleRules: [{ maxImageCount: 2 }], // ~15 GB each
       removalPolicy: RemovalPolicy.RETAIN,
     });
 
@@ -193,6 +201,49 @@ export class ClipperStack extends Stack {
       ],
     });
 
+    // ── Cost guard: hard-stop GPU spend on budget breach or when credits run out.
+    // Two topics so the kill switch never triggers itself: Budgets → trigger → Lambda → alerts → email.
+    const trigger = new sns.Topic(this, "CostGuardTrigger", { topicName: "clipper-cost-guard-trigger" });
+    trigger.addToResourcePolicy(
+      new iam.PolicyStatement({
+        actions: ["sns:Publish"],
+        principals: [new iam.ServicePrincipal("budgets.amazonaws.com")],
+        resources: [trigger.topicArn],
+        conditions: { StringEquals: { "aws:SourceAccount": this.account } },
+      }),
+    );
+    const alerts = new sns.Topic(this, "CostGuardTopic", { topicName: "clipper-cost-guard" });
+    alerts.addSubscription(new snsSubs.EmailSubscription(props.alertEmail));
+
+    const killSwitch = new lambda.Function(this, "KillSwitch", {
+      functionName: "clipper-cost-guard",
+      runtime: lambda.Runtime.PYTHON_3_13,
+      handler: "kill_switch.handler",
+      code: lambda.Code.fromAsset(path.join(__dirname, "..", "lambda")),
+      timeout: Duration.minutes(2),
+      environment: {
+        JOB_QUEUE: queue.jobQueueArn,
+        COMPUTE_ENV: computeEnv.computeEnvironmentArn,
+        ALERT_TOPIC: alerts.topicArn,
+        CREDIT_FLOOR_USD: "5",
+      },
+      logGroup: new logs.LogGroup(this, "KillSwitchLogs", { retention: logs.RetentionDays.ONE_YEAR }),
+    });
+    killSwitch.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ["batch:UpdateJobQueue", "batch:UpdateComputeEnvironment", "batch:ListJobs", "batch:TerminateJob"],
+        resources: ["*"],
+      }),
+    );
+    killSwitch.addToRolePolicy(new iam.PolicyStatement({ actions: ["freetier:GetAccountPlanState"], resources: ["*"] }));
+    alerts.grantPublish(killSwitch);
+    trigger.addSubscription(new snsSubs.LambdaSubscription(killSwitch));
+    new events.Rule(this, "DailyCreditCheck", {
+      schedule: events.Schedule.cron({ minute: "0", hour: "6" }),
+      targets: [new targets.LambdaFunction(killSwitch)],
+    });
+
+    new CfnOutput(this, "CostGuardTriggerArn", { value: trigger.topicArn });
     new CfnOutput(this, "WorkBucketName", { value: work.bucketName });
     new CfnOutput(this, "RepoUri", { value: repo.repositoryUri });
     new CfnOutput(this, "BuildProject", { value: build.projectName });

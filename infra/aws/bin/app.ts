@@ -8,4 +8,5 @@ new ClipperStack(app, "Clipper", {
   r2Bucket: app.node.tryGetContext("r2Bucket") ?? "clipper-clips",
   infisicalIdentityId: app.node.tryGetContext("infisicalIdentityId") ?? "",
   infisicalProjectId: app.node.tryGetContext("infisicalProjectId") ?? "",
+  alertEmail: app.node.tryGetContext("alertEmail") ?? "",
 });

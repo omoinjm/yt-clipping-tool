@@ -4,6 +4,7 @@
     "apiUrl": "https://<DASHBOARD_HOST>",
     "r2Bucket": "clipper-clips",
     "infisicalIdentityId": "<INFISICAL_IDENTITY_ID>",
+    "alertEmail": "<ALERT_EMAIL>",
     "infisicalProjectId": "<INFISICAL_PROJECT_ID>"
   }
 }
