@@ -69,7 +69,7 @@ All secrets live in the Infisical project **njmtech-clipping** (`.infisical.json
 | `HF_TOKEN` | `--diarize` (pyannote) |
 | `YT_CLIENT_ID`, `YT_CLIENT_SECRET`, `YT_REFRESH_TOKEN` | dashboard "Upload to YouTube" (from `clipper youtube-auth`) |
 
-Claude runs on **Amazon Bedrock** (`eu.anthropic.claude-opus-5-5`) with IAM credentials, so no API key is needed. The account must first submit Anthropic's use-case form once: Bedrock console → Model catalog → any Claude model.
+Claude runs on **Amazon Bedrock** (`eu.anthropic.claude-sonnet-4-6`; Opus 5.5 once AWS enables it for the account) with IAM credentials, so no API key is needed. The account must first submit Anthropic's use-case form once: Bedrock console → Model catalog → any Claude model.
 
 ### One-time setup
 

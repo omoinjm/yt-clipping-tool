@@ -41,8 +41,8 @@ class Settings:
     anthropic_model: str = field(
         default_factory=lambda: _env(
             "ANTHROPIC_MODEL",
-            # Bedrock serves Opus 5.5 through the EU cross-region inference profile.
-            "eu.anthropic.claude-opus-5-5" if _env("CLAUDE_PROVIDER", "bedrock") == "bedrock" else "claude-opus-5-5",
+            # Bedrock EU inference profile. Sonnet 4.6 until AWS unlocks Opus 5.5 for this account.
+            "eu.anthropic.claude-sonnet-4-6" if _env("CLAUDE_PROVIDER", "bedrock") == "bedrock" else "claude-opus-5-5",
         )
     )
     min_clip_s: float = 20.0

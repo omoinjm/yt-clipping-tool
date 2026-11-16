@@ -18,8 +18,10 @@ export interface ClipperStackProps extends StackProps {
   infisicalProjectId: string;
 }
 
-/** Bedrock model the job may invoke (EU cross-region inference profile + its regional foundation models). */
-const BEDROCK_MODEL = "anthropic.claude-opus-5-5";
+/** Bedrock model the job uses (EU cross-region inference profile). Opus 5.5 is gated on this account for now. */
+const BEDROCK_MODEL = "anthropic.claude-sonnet-4-6";
+/** Models the job role may invoke, so switching is a one-line change. */
+const BEDROCK_ALLOWED = ["anthropic.claude-sonnet-4-6", "anthropic.claude-opus-5-5"];
 
 export class ClipperStack extends Stack {
   constructor(scope: Construct, id: string, props: ClipperStackProps) {
@@ -129,10 +131,10 @@ export class ClipperStack extends Stack {
     jobRole.addToPolicy(
       new iam.PolicyStatement({
         actions: ["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream"],
-        resources: [
-          `arn:aws:bedrock:${this.region}:${this.account}:inference-profile/eu.${BEDROCK_MODEL}`,
-          `arn:aws:bedrock:*::foundation-model/${BEDROCK_MODEL}`,
-        ],
+        resources: BEDROCK_ALLOWED.flatMap((m) => [
+          `arn:aws:bedrock:${this.region}:${this.account}:inference-profile/eu.${m}`,
+          `arn:aws:bedrock:*::foundation-model/${m}`,
+        ]),
       }),
     );
 
