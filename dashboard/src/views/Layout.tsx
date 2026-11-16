@@ -41,6 +41,15 @@ export function Layout(props: { title: string; email: string; refresh?: boolean;
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         {props.refresh ? <meta http-equiv="refresh" content="15" /> : null}
         <title>{props.title} · Clipper</title>
+        <link rel="icon" href="/favicon.ico" sizes="any" />
+        <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+        <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+        {/* use-credentials: the manifest sits behind Cloudflare Access, so the browser must send the login cookie */}
+        <link rel="manifest" href="/site.webmanifest" crossorigin="use-credentials" />
+        <meta name="theme-color" content="#0f1115" />
+        <meta name="apple-mobile-web-app-title" content="Clipper" />
+        <meta name="apple-mobile-web-app-capable" content="yes" />
+        <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
         <style>{raw(CSS)}</style>
       </head>
       <body>
