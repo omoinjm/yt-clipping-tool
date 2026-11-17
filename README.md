@@ -154,7 +154,25 @@ There's no hard cap in AWS, so the stack enforces one.
 - Only clip content you own or have written permission for. Re-uploading other people's videos risks copyright strikes and fails YouTube's "reused content" monetization policy. Captions, hooks and tight edits help, but they don't replace permission.
 - YouTube Partner Program for Shorts: 1,000 subscribers + 10M Shorts views in 90 days.
 
-## TikTok and Instagram
+## Public upload link
+
+**Submissions** in the dashboard creates a secret link (`/u/<token>`) that anyone can use to upload a video. Uploaders can only upload; they can't see clips or accounts or post anywhere.
+
+- Each upload needs the uploader's name, email and a rights confirmation, and passes a Turnstile bot check.
+- Uploads are limited to video files up to 5 GB and 5 per hour per network. They go to R2 under `submissions/`.
+- **Nothing is processed until you review it.** **Accept** creates a "permission granted" source, using the uploader's details as proof and their credit line, then queues the GPU job. **Reject** deletes the file.
+- **New link** rotates the token, so the old link stops working. **Turn off** disables uploads.
+- Abandoned uploads are cleaned up by the hourly cron.
+
+One-time setup:
+1. **Cloudflare Access:** the dashboard sits behind Access, so add a second Access application for the same hostname with **path `u`** and a **Bypass → Everyone** policy. Only `/u/*` becomes public; everything else still needs login. The Worker never serves dashboard data on `/u`.
+2. **Turnstile:** Cloudflare dashboard → Turnstile → Add widget.
+   - Hostname: the dashboard's. Mode: Managed.
+   - Put its keys in Infisical as `TURNSTILE_SITE_KEY` / `TURNSTILE_SECRET_KEY`, then run `./scripts/sync-worker-secrets.sh`.
+   - Without them the page still works, but with no bot check; the Submissions page warns about it.
+3. Optional: an R2 lifecycle rule to expire `submissions/` objects after N days. Accepted sources still need theirs until the job has run.
+
+
 
 Each clip page has **TikTok** and **Instagram** sections next to YouTube.
 

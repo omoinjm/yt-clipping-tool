@@ -12,6 +12,9 @@ import { LogPanel, ProgressPanel, RetryForm } from "./views/Progress";
 import * as youtube from "./youtube";
 import { allMetrics, refreshMetrics } from "./social/metrics";
 import { MetricsPage } from "./views/Metrics";
+import pub from "./public";
+import { cleanupAbandoned, getSubmission, getUploadToken, listSubmissions, setSubmission, setUploadToken } from "./submissions";
+import { SubmissionsPage } from "./views/Submissions";
 import { uploadToYouTube } from "./youtube";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 import { captionFor, savedCaptions, withCredit, CAPTION_MAX } from "./social/captions";
@@ -60,6 +63,9 @@ api.patch("/clips/:id", async (c) => {
 });
 
 app.route("/api/internal", api);
+
+// ───────────── Public upload link (NOT behind Access: needs an Access Bypass policy for /u) ─────────────
+app.route("/u", pub);
 
 // ───────────── UI (behind Cloudflare Access) ─────────────
 const ui = new Hono<AppEnv>();
@@ -390,6 +396,61 @@ ui.post("/clips/:id/social/:platform", async (c) => {
   }
 });
 
+// ── Public upload submissions
+ui.get("/submissions", async (c) => {
+  const [token, subs] = await Promise.all([getUploadToken(c.env.DB), listSubmissions(c.env.DB)]);
+  return c.html(
+    <Layout title="Submissions" email={c.get("email")} nav="submissions">
+      <SubmissionsPage link={token ? `${new URL(c.req.url).origin}/u/${token}` : null}
+        turnstile={!!(c.env.TURNSTILE_SITE_KEY && c.env.TURNSTILE_SECRET_KEY)} subs={subs} flash={c.req.query("flash")} />
+    </Layout>,
+  );
+});
+
+ui.post("/submissions/link", async (c) => {
+  const action = String((await c.req.parseBody()).action ?? "");
+  const token = await setUploadToken(c.env.DB, action === "rotate");
+  return c.redirect(`/submissions?flash=${encodeURIComponent(token ? "New upload link created; the old one no longer works" : "Upload link turned off")}`, 303);
+});
+
+ui.post("/submissions/:id/accept", async (c) => {
+  const sub = await getSubmission(c.env.DB, c.req.param("id"));
+  if (!sub || sub.status !== "received") return c.redirect("/submissions?flash=That+upload+isn%27t+waiting+for+review", 303);
+  const f = await c.req.parseBody();
+  const id = String(f.source_id ?? "").trim().toLowerCase();
+  const clips = Math.min(10, Math.max(1, Number(f.clips) || 5));
+  const back = (m: string) => c.redirect(`/submissions?flash=${encodeURIComponent(m)}`, 303);
+  if (!sourceKeyFor(id, "x.mp4")) return back("Source ID: 2–41 chars, lowercase letters, digits, - or _");
+  if (await db.getSource(c.env.DB, id)) return back(`Source ID “${id}” is already used`);
+  // The uploader's details + rights confirmation are the permission record; the job re-checks it.
+  await db.upsertSource(c.env.DB, id, {
+    origin: `r2://${c.env.R2_BUCKET_NAME}/${sub.r2_key}`,
+    owner: sub.name,
+    permission: "granted",
+    proof: `Public upload ${sub.id} by ${sub.name} <${sub.email}> on ${sub.created_at} UTC; uploader confirmed they own the rights and allowed clipping and publishing with credit.`,
+    credit: sub.credit || sub.name,
+    stage: "queued",
+    error: null,
+  });
+  await setSubmission(c.env.DB, sub.id, { status: "accepted", source_id: id });
+  try {
+    const jobId = await submitBatchJob(c.env, id, clips);
+    await db.setSourceStage(c.env.DB, id, { stage: "queued", batch_job_id: jobId });
+  } catch (err) {
+    await db.setSourceStage(c.env.DB, id, { stage: "failed", error: `Could not start job: ${String(err)}` });
+  }
+  return c.redirect(`/sources/${id}`, 303);
+});
+
+ui.post("/submissions/:id/reject", async (c) => {
+  const sub = await getSubmission(c.env.DB, c.req.param("id"));
+  if (sub && sub.status === "received") {
+    await c.env.CLIPS.delete(sub.r2_key);
+    await setSubmission(c.env.DB, sub.id, { status: "rejected" });
+  }
+  return c.redirect("/submissions?flash=Upload+rejected+and+deleted", 303);
+});
+
 // ── Metrics
 ui.get("/metrics", async (c) => {
   const [clips, metrics] = await Promise.all([db.listClips(c.env.DB, {}), allMetrics(c.env.DB)]);
@@ -502,7 +563,7 @@ ui.post("/clips/:id/youtube", async (c) => {
 // Clip media from R2, with Range support so <video> can seek.
 ui.get("/media/*", async (c) => {
   const key = decodeURIComponent(c.req.path.slice("/media/".length));
-  if (!key.startsWith("clips/") || key.includes("..")) return c.notFound();
+  if (!(key.startsWith("clips/") || key.startsWith("submissions/")) || key.includes("..")) return c.notFound();
   const obj = await c.env.CLIPS.get(key, { range: c.req.raw.headers, onlyIf: c.req.raw.headers });
   if (obj === null) return c.notFound();
   const headers = new Headers();
@@ -531,7 +592,11 @@ export default {
   // Every minute: finish TikTok/Instagram posts still processing.
   // Hourly: also notice TikTok drafts that were posted from the app, then refresh metrics.
   async scheduled(event, env, ctx) {
-    if (event.cron === "5 * * * *") ctx.waitUntil(advancePending(env, undefined, true).then(() => refreshMetrics(env)).then(() => undefined));
+    if (event.cron === "5 * * * *")
+      ctx.waitUntil(Promise.all([
+        advancePending(env, undefined, true).then(() => refreshMetrics(env)),
+        cleanupAbandoned(env),
+      ]).then(() => undefined));
     else ctx.waitUntil(advancePending(env));
   },
 } satisfies ExportedHandler<Env>;

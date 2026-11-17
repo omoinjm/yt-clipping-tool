@@ -1,7 +1,7 @@
 import type { Child } from "hono/jsx";
 import { raw } from "hono/html";
 
-export type Nav = "clips" | "sources" | "new" | "metrics" | "accounts";
+export type Nav = "clips" | "sources" | "new" | "submissions" | "metrics" | "accounts";
 
 const CSS = `
 :root{
@@ -245,6 +245,7 @@ const NAV: [Nav, string, string][] = [
   ["clips", "/", "Clips"],
   ["sources", "/sources", "Sources"],
   ["new", "/sources/new", "New source"],
+  ["submissions", "/submissions", "Submissions"],
   ["metrics", "/metrics", "Metrics"],
   ["accounts", "/accounts", "Accounts"],
 ];
@@ -284,6 +285,36 @@ export function Layout(props: { title: string; email: string; nav?: Nav; refresh
           <div class="mb"><h3 id="confirm-title">Are you sure?</h3><p /></div>
           <div class="mf"><button type="button" data-cancel>Cancel</button><button type="button" class="primary" data-ok>Continue</button></div>
         </dialog>
+        <script>{raw(JS)}</script>
+      </body>
+    </html>
+  );
+}
+
+/** Shell for public pages (upload link): same look, no navigation, no account details. */
+export function PublicLayout(props: { title: string; head?: Child; children: Child }) {
+  return (
+    <html lang="en">
+      <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <meta name="referrer" content="no-referrer" />
+        <meta name="robots" content="noindex, nofollow" />
+        <title>{props.title} · Clipper by NJMTECH</title>
+        <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+        <meta name="theme-color" content="#0b0d12" />
+        <style>{raw(CSS)}</style>
+        {props.head}
+      </head>
+      <body>
+        <header class="top">
+          <div class="in"><span class="brand"><i>✂</i>Clipper <span class="muted" style="font-weight:500;font-size:13px">by NJMTECH</span></span></div>
+        </header>
+        <main>{props.children}</main>
+        <footer class="muted small" style="text-align:center;padding:0 16px 40px">
+          <a href="https://njmtech.co.za/clippers-terms" target="_blank" rel="noopener">Terms</a> ·{" "}
+          <a href="https://njmtech.co.za/clippers-policy" target="_blank" rel="noopener">Privacy</a>
+        </footer>
         <script>{raw(JS)}</script>
       </body>
     </html>

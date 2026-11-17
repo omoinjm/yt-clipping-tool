@@ -23,6 +23,8 @@ interface __BaseEnv_Env {
 	META_APP_ID: string;
 	META_APP_SECRET: string;
 	META_CONFIG_ID: string;
+	TURNSTILE_SITE_KEY: string;
+	TURNSTILE_SECRET_KEY: string;
 	R2_ACCOUNT_ID: string;
 	R2_ACCESS_KEY_ID: string;
 	R2_SECRET_ACCESS_KEY: string;

@@ -29,4 +29,6 @@ infisical run --env "$ENV" --silent -- bash -c '
   put R2_ACCOUNT_ID "${R2_ACCOUNT_ID:-}"
   put R2_ACCESS_KEY_ID "${R2_ACCESS_KEY_ID:-}"
   put R2_SECRET_ACCESS_KEY "${R2_SECRET_ACCESS_KEY:-}"
+  put TURNSTILE_SITE_KEY "${TURNSTILE_SITE_KEY:-}"
+  put TURNSTILE_SECRET_KEY "${TURNSTILE_SECRET_KEY:-}"
 '
