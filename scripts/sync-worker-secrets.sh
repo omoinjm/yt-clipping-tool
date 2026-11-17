@@ -11,7 +11,12 @@ cd "$(dirname "$0")/.."
 cd dashboard
 ENV=${INFISICAL_ENV:-prod}
 infisical run --env "$ENV" --silent -- bash -c '
-  put() { [ -n "${2:-}" ] && printf "%s" "$2" | npx wrangler secret put "$1" >/dev/null && echo "✓ $1" || echo "· $1 (not in Infisical, skipped)"; }
+  # wrangler treats CF_API_TOKEN as its own login token (deprecated alias); ours is only for the Users page.
+  ACCESS_API_TOKEN="${CF_API_TOKEN:-}"; unset CF_API_TOKEN
+  put() {
+    if [ -z "${2:-}" ]; then echo "· $1 (not in Infisical, skipped)"; return; fi
+    if printf "%s" "$2" | npx wrangler secret put "$1" >/dev/null 2>&1; then echo "✓ $1"; else echo "✗ $1 (wrangler secret put failed)"; fi
+  }
   export CLOUDFLARE_ACCOUNT_ID
   put ACCESS_TEAM_DOMAIN "${ACCESS_TEAM_DOMAIN:-}"
   put ACCESS_AUD "${ACCESS_AUD:-}"
@@ -31,7 +36,7 @@ infisical run --env "$ENV" --silent -- bash -c '
   put R2_SECRET_ACCESS_KEY "${R2_SECRET_ACCESS_KEY:-}"
   put TURNSTILE_SITE_KEY "${TURNSTILE_SITE_KEY:-}"
   put TURNSTILE_SECRET_KEY "${TURNSTILE_SECRET_KEY:-}"
-  put CF_API_TOKEN "${CF_API_TOKEN:-}"
+  put CF_API_TOKEN "$ACCESS_API_TOKEN"
   put CF_ACCOUNT_ID "${CLOUDFLARE_ACCOUNT_ID:-}"
   put CF_ACCESS_GROUP_ID "${CF_ACCESS_GROUP_ID:-}"
 '

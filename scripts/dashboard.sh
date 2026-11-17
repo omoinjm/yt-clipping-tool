@@ -11,6 +11,7 @@ ENV=${INFISICAL_ENV:-prod}
 cmd=${1:-deploy}; shift || true
 infisical run --env "$ENV" --silent -- bash -c '
 set -euo pipefail
+unset CF_API_TOKEN  # the Users-page token; wrangler would otherwise use it as its own login
 python3 scripts/render-wrangler.py
 cd dashboard
 export CLOUDFLARE_ACCOUNT_ID
