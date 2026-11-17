@@ -70,7 +70,10 @@ All secrets and account-specific IDs live in the Infisical project **njmtech-cli
 | `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_ACCOUNT_ID` | job → R2 clip uploads |
 | `CF_ACCESS_CLIENT_ID`, `CF_ACCESS_CLIENT_SECRET` | CLI + job → through Cloudflare Access |
 | `HF_TOKEN` | `--diarize` (pyannote) |
-| `YT_CLIENT_ID`, `YT_CLIENT_SECRET`, `YT_REFRESH_TOKEN` | dashboard "Upload to YouTube" (from `clipper youtube-auth`) |
+| `YT_CLIENT_ID`, `YT_CLIENT_SECRET` | dashboard **Accounts → Connect YouTube** (Google OAuth *Web application* client) |
+| `TOKEN_ENC_KEY` | encrypts TikTok/Instagram tokens stored in D1 (`openssl rand -base64 32`) |
+| `TIKTOK_CLIENT_KEY`, `TIKTOK_CLIENT_SECRET` | dashboard "Post to TikTok" |
+| `IG_APP_ID`, `IG_APP_SECRET` | dashboard "Post to Instagram" (also needs the `R2_*` keys, synced to the Worker) |
 
 Claude runs on **Amazon Bedrock** (`eu.anthropic.claude-sonnet-4-6`; Opus 5.5 once AWS enables it for the account) with IAM credentials, so no API key is needed. The account must first submit Anthropic's use-case form once: Bedrock console → Model catalog → any Claude model.
 
@@ -151,9 +154,41 @@ There's no hard cap in AWS, so the stack enforces one.
 - Only clip content you own or have written permission for. Re-uploading other people's videos risks copyright strikes and fails YouTube's "reused content" monetization policy. Captions, hooks and tight edits help, but they don't replace permission.
 - YouTube Partner Program for Shorts: 1,000 subscribers + 10M Shorts views in 90 days.
 
+## TikTok and Instagram
+
+Each clip page has **TikTok** and **Instagram** sections next to YouTube.
+
+- **Captions** start out automatic: the clip's title, description (Instagram only), up to 5 hashtags from its tags, and the credit line. Edit the text and **Save caption** to keep your own; **Use auto caption** goes back. For CC BY and "permission granted" sources, the credit line is added back if it's edited out.
+- **TikTok**: **Post now** (caption, who can view, comments/duet/stitch) or **Send to TikTok drafts** (finish in the app; drafts carry no caption, so paste it there).
+- **Instagram**: posts a Reel; "Also show in the profile grid" is `share_to_feed`.
+- Posts process asynchronously. A cron runs every minute to finish them and records the result with a link. It also refreshes the Instagram token before its 60 days run out.
+
+**Connect accounts** under **Accounts** in the dashboard (OAuth; tokens are stored encrypted in D1). One-time app setup:
+
+1. **TikTok** ([developers.tiktok.com](https://developers.tiktok.com/)): create an app.
+   - Add **Login Kit** and **Content Posting API** (enable Direct Post).
+   - Scopes `user.info.basic`, `video.publish`, `video.upload`.
+   - Redirect URI `https://<dashboard>/oauth/tiktok/callback`.
+   - Put the client key/secret in Infisical as `TIKTOK_CLIENT_KEY` / `TIKTOK_CLIENT_SECRET`.
+   - **Until TikTok audits the app, direct posts are private ("Only me") and the posting account must be private.** Drafts work for any account. Apply for the audit from the app page once it works.
+2. **Instagram** ([developers.facebook.com](https://developers.facebook.com/apps)): create an app (Business type).
+   - Add **Instagram → API setup with Instagram login**.
+   - Business login redirect URL `https://<dashboard>/oauth/instagram/callback`.
+   - Permissions `instagram_business_basic`, `instagram_business_content_publish`.
+   - Put the *Instagram* app ID/secret in Infisical as `IG_APP_ID` / `IG_APP_SECRET`.
+   - The account must be a **Business or Creator** account. While the app is in development mode, add the account under App roles → Instagram testers and accept the invite in Instagram.
+   - Instagram downloads the video from a presigned R2 link that expires after 2 hours, so the dashboard stays behind Access.
+3. Add `TOKEN_ENC_KEY` to Infisical, then run `./scripts/dashboard.sh migrate` and `./scripts/sync-worker-secrets.sh`.
+
 ## YouTube API notes
 
-- Create a Google Cloud project, enable **YouTube Data API v3**, create an OAuth client of type **Desktop app**, and save it as `client_secret.json`. The first upload prints an auth URL.
+- **Dashboard:** connect the channel under **Accounts → Connect YouTube**. One-time Google Cloud setup:
+  1. Create a project and enable **YouTube Data API v3**.
+  2. **Google Auth Platform → Branding/Audience:** External. Set it to **In production**: in "Testing" mode, Google expires the refresh token after 7 days. Unverified is fine for your own channels; Google shows an "unverified app" warning you click through.
+  3. **Data access:** add the scopes `youtube.upload` and `youtube.readonly`.
+  4. **Clients → Create client → Web application**, redirect URI `https://<dashboard>/oauth/youtube/callback`. Put its ID/secret in Infisical as `YT_CLIENT_ID` / `YT_CLIENT_SECRET`, then run `./scripts/sync-worker-secrets.sh`.
+  5. Sign in with the Google account that owns or manages the channel. For a brand channel, **pick the channel on the account chooser**; the Accounts page then shows its handle so you can confirm it's the right one.
+- **Local CLI** (`clipper upload`): uses a separate **Desktop app** client saved as `client_secret.json`; the first upload prints an auth URL.
 - Default quota is 10,000 units/day. One upload costs about 1,600, so about 6 uploads/day.
 - Until Google audits the API project, uploads are locked to private. That's fine for drafts, but apply for the audit early.
 

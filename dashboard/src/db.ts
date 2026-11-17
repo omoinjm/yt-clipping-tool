@@ -10,6 +10,7 @@ export type ClipRow = {
   review: "pending" | "approved" | "rejected"; layout: string | null; duration: number | null;
   video_key: string | null; thumb_key: string | null; output_path: string | null; youtube_id: string | null;
   error: string | null; created_at: string; updated_at: string;
+  captions: string; // JSON {tiktok?, instagram?}: user-written captions
 };
 
 type Value = string | number | null;
@@ -17,7 +18,7 @@ type Value = string | number | null;
 const SOURCE_COLS = ["origin", "owner", "permission", "proof", "credit", "duration", "stage", "error", "batch_job_id"];
 const CLIP_UPDATE_COLS = [
   "stage", "review", "layout", "duration", "video_key", "thumb_key", "output_path", "youtube_id", "error",
-  "title", "description", "tags", "hook",
+  "title", "description", "tags", "hook", "captions",
 ];
 
 /** Keep only whitelisted columns; serialize arrays (tags) to JSON. */
@@ -74,7 +75,13 @@ export async function setSourceStage(db: D1Database, id: string, body: Record<st
 }
 
 export async function replaceClips(db: D1Database, sourceId: string, clips: Record<string, unknown>[]) {
-  const stmts = [db.prepare("DELETE FROM clips WHERE source_id = ? AND youtube_id IS NULL").bind(sourceId)];
+  // Keep clips already published anywhere (YouTube, or a TikTok/Instagram post that didn't fail).
+  const stmts = [
+    db.prepare(
+      `DELETE FROM clips WHERE source_id = ? AND youtube_id IS NULL
+       AND id NOT IN (SELECT clip_id FROM posts WHERE status != 'failed')`,
+    ).bind(sourceId),
+  ];
   for (const c of clips) {
     stmts.push(
       db.prepare(

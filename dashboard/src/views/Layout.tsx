@@ -36,6 +36,8 @@ button.primary{background:var(--accent);color:#111;border-color:var(--accent);fo
 .steps li{color:var(--muted)}.steps .mark{display:inline-block;width:1.2em}
 .steps .done .mark{color:var(--ok)}.steps .active{color:var(--text);font-weight:600}.steps .active .mark{color:var(--warn)}
 .steps .failed{color:var(--bad)}
+ul.posts{list-style:none;padding:0;margin:4px 0 0;display:flex;flex-direction:column;gap:6px;font-size:13px}
+.badges{display:flex;gap:4px}.badges span{font-size:11px;padding:1px 6px;border-radius:999px;border:1px solid var(--ok);color:var(--ok)}
 pre.logs{max-height:420px;overflow:auto;margin:0;padding:12px;background:#0a0c10;color:#cfd5df;border:1px solid var(--line);border-radius:10px;font:12px/1.5 ui-monospace,monospace;white-space:pre-wrap;word-break:break-word}
 `;
 
@@ -65,6 +67,7 @@ export function Layout(props: { title: string; email: string; refresh?: boolean;
             <a href="/">Clips</a>
             <a href="/sources">Sources</a>
             <a href="/sources/new">+ New source</a>
+            <a href="/accounts">Accounts</a>
           </nav>
           <span class="me">{props.email}</span>
         </header>
@@ -78,7 +81,7 @@ const STAGE_TONE: Record<string, string> = {
   published: "ok", uploaded: "ok", done: "ok", rendered: "ok", approved: "ok",
   queued: "warn", running: "warn", rendering: "warn", producing: "warn", transcribed: "warn", scenes: "warn",
   selected: "warn", ingested: "warn", partial: "warn", pending: "",
-  failed: "bad", rejected: "bad",
+  failed: "bad", rejected: "bad", processing: "warn", drafted: "ok",
 };
 
 export const Pill = (p: { v: string }) => <span class={`pill ${STAGE_TONE[p.v] ?? ""}`}>{p.v}</span>;

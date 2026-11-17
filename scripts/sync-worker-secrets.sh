@@ -3,7 +3,8 @@
 #   ACCESS_TEAM_DOMAIN, ACCESS_AUD   (Cloudflare Access verification)
 #   INTERNAL_API_TOKEN  ← CLIPPER_API_TOKEN
 #   AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY ← DASHBOARD_AWS_* (IAM user clipper-dashboard: Batch submit/describe + job log reads)
-#   YT_CLIENT_ID / YT_CLIENT_SECRET / YT_REFRESH_TOKEN  (if present in Infisical)
+#   YT_CLIENT_ID / YT_CLIENT_SECRET  (Google OAuth web client; the channel is connected in the dashboard)
+#   TOKEN_ENC_KEY, TIKTOK_CLIENT_KEY/SECRET, IG_APP_ID/SECRET, R2_* (TikTok + Instagram publishing)
 set -euo pipefail
 cd "$(dirname "$0")/.."
 ./scripts/dashboard.sh render >/dev/null
@@ -19,5 +20,12 @@ infisical run --env "$ENV" --silent -- bash -c '
   put AWS_SECRET_ACCESS_KEY "${DASHBOARD_AWS_SECRET_ACCESS_KEY:-}"
   put YT_CLIENT_ID "${YT_CLIENT_ID:-}"
   put YT_CLIENT_SECRET "${YT_CLIENT_SECRET:-}"
-  put YT_REFRESH_TOKEN "${YT_REFRESH_TOKEN:-}"
+  put TOKEN_ENC_KEY "${TOKEN_ENC_KEY:-}"
+  put TIKTOK_CLIENT_KEY "${TIKTOK_CLIENT_KEY:-}"
+  put TIKTOK_CLIENT_SECRET "${TIKTOK_CLIENT_SECRET:-}"
+  put IG_APP_ID "${IG_APP_ID:-}"
+  put IG_APP_SECRET "${IG_APP_SECRET:-}"
+  put R2_ACCOUNT_ID "${R2_ACCOUNT_ID:-}"
+  put R2_ACCESS_KEY_ID "${R2_ACCESS_KEY_ID:-}"
+  put R2_SECRET_ACCESS_KEY "${R2_SECRET_ACCESS_KEY:-}"
 '

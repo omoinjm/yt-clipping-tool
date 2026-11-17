@@ -17,6 +17,14 @@ interface __BaseEnv_Env {
 	AWS_SECRET_ACCESS_KEY: string;
 	ACCESS_TEAM_DOMAIN: string;
 	ACCESS_AUD: string;
+	TOKEN_ENC_KEY: string;
+	TIKTOK_CLIENT_KEY: string;
+	TIKTOK_CLIENT_SECRET: string;
+	IG_APP_ID: string;
+	IG_APP_SECRET: string;
+	R2_ACCOUNT_ID: string;
+	R2_ACCESS_KEY_ID: string;
+	R2_SECRET_ACCESS_KEY: string;
 }
 declare namespace Cloudflare {
 	interface GlobalProps {

@@ -1,7 +1,11 @@
+import type { Child } from "hono/jsx";
 import type { ClipRow } from "../db";
+import type { PostRow } from "../social/posts";
+import type { Platform } from "../social/tokens";
 import { Pill } from "./Layout";
 
-export function ClipGrid(props: { clips: ClipRow[] }) {
+export function ClipGrid(props: { clips: ClipRow[]; posts?: Map<string, Partial<Record<Platform, PostRow>>> }) {
+  const live = (c: ClipRow, p: Platform) => ["published", "drafted"].includes(props.posts?.get(c.id)?.[p]?.status ?? "");
   if (props.clips.length === 0) return <p class="muted">No clips yet. Submit a source with <code>clipper submit &lt;id&gt;</code>.</p>;
   return (
     <div class="grid">
@@ -16,6 +20,13 @@ export function ClipGrid(props: { clips: ClipRow[] }) {
               {c.review !== "pending" ? <Pill v={c.review} /> : null}
               {c.duration ? <span class="muted">{c.duration.toFixed(0)}s</span> : null}
             </span>
+            {c.youtube_id || live(c, "tiktok") || live(c, "instagram") ? (
+              <span class="badges">
+                {c.youtube_id ? <span>YT</span> : null}
+                {live(c, "tiktok") ? <span>TikTok</span> : null}
+                {live(c, "instagram") ? <span>IG</span> : null}
+              </span>
+            ) : null}
           </div>
         </a>
       ))}
@@ -23,7 +34,7 @@ export function ClipGrid(props: { clips: ClipRow[] }) {
   );
 }
 
-export function ClipDetail(props: { clip: ClipRow; credit: string | null; flash?: string }) {
+export function ClipDetail(props: { clip: ClipRow; credit: string | null; flash?: string; social?: Child; youtubeChannel?: string | null }) {
   const c = props.clip;
   const tags: string[] = JSON.parse(c.tags || "[]");
   return (
@@ -65,10 +76,13 @@ export function ClipDetail(props: { clip: ClipRow; credit: string | null; flash?
           </form>
 
           <h2>YouTube</h2>
-          {c.youtube_id ? (
+          {!c.youtube_id && props.youtubeChannel === null ? (
+            <p class="muted">Not connected. <a href="/accounts">Connect YouTube</a></p>
+          ) : c.youtube_id ? (
             <p>Uploaded as <code>{c.youtube_id}</code>. Publish it from YouTube Studio.</p>
           ) : (
             <form method="post" action={`/clips/${c.id}/youtube`} class="row">
+              {props.youtubeChannel ? <span class="muted" style="width:100%">Uploading to <b>{props.youtubeChannel}</b></span> : null}
               <select name="privacy">
                 <option value="private">private (draft)</option>
                 <option value="unlisted">unlisted</option>
@@ -77,6 +91,7 @@ export function ClipDetail(props: { clip: ClipRow; credit: string | null; flash?
               <button type="submit" class="primary" disabled={!c.video_key}>Upload to YouTube</button>
             </form>
           )}
+          {props.social}
         </div>
       </div>
     </>

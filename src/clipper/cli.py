@@ -204,20 +204,5 @@ def jobs() -> None:
         typer.echo(f"{s['id']:20} {s['stage']:11} clips={s.get('clip_count', 0):<3} {s.get('error') or ''}")
 
 
-@app.command("youtube-auth")
-def youtube_auth() -> None:
-    """One-time Google OAuth; prints the refresh token to store as a dashboard Worker secret."""
-    from google_auth_oauthlib.flow import InstalledAppFlow
-
-    from .upload import SCOPES
-
-    flow = InstalledAppFlow.from_client_secrets_file(str(settings.yt_client_secrets), SCOPES)
-    creds = flow.run_local_server(port=0, open_browser=False, access_type="offline", prompt="consent")
-    typer.echo("\nStore these as Worker secrets (cd dashboard && npx wrangler secret put <NAME>):")
-    typer.echo(f"  YT_CLIENT_ID      = {creds.client_id}")
-    typer.echo(f"  YT_CLIENT_SECRET  = {creds.client_secret}")
-    typer.echo(f"  YT_REFRESH_TOKEN  = {creds.refresh_token}")
-
-
 if __name__ == "__main__":
     app()

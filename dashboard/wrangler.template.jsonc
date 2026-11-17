@@ -14,6 +14,8 @@
     { "binding": "DB", "database_name": "clipper", "database_id": "${D1_DATABASE_ID}", "migrations_dir": "migrations" }
   ],
   "r2_buckets": [{ "binding": "CLIPS", "bucket_name": "clipper-clips" }],
+  // Each minute: finish TikTok/Instagram posts that are still processing (src/social/posts.ts).
+  "triggers": { "crons": ["* * * * *"] },
   "vars": {
     "YT_CATEGORY_ID": "22",
     // AWS Batch target for the "New source" form (key: secrets AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY).
@@ -24,5 +26,7 @@
   }
   // Secrets (scripts/sync-worker-secrets.sh from Infisical): ACCESS_TEAM_DOMAIN, ACCESS_AUD,
   // INTERNAL_API_TOKEN, AWS_ACCESS_KEY_ID,
-  // AWS_SECRET_ACCESS_KEY, YT_CLIENT_ID, YT_CLIENT_SECRET, YT_REFRESH_TOKEN
+  // AWS_SECRET_ACCESS_KEY, YT_CLIENT_ID, YT_CLIENT_SECRET,
+  // TOKEN_ENC_KEY, TIKTOK_CLIENT_KEY, TIKTOK_CLIENT_SECRET, IG_APP_ID, IG_APP_SECRET,
+  // R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY
 }

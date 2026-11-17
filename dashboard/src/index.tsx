@@ -9,7 +9,15 @@ import { sourceKeyFor, validate, type NewSource, type Permission } from "./sourc
 import { describeJobs, logTail, submitBatchJob, type LogLine } from "./aws";
 import { progress, syncBatch } from "./progress";
 import { LogPanel, ProgressPanel, RetryForm } from "./views/Progress";
+import * as youtube from "./youtube";
 import { uploadToYouTube } from "./youtube";
+import { getCookie, setCookie, deleteCookie } from "hono/cookie";
+import { captionFor, savedCaptions, withCredit, CAPTION_MAX } from "./social/captions";
+import * as instagram from "./social/instagram";
+import { advancePending, clipPosts, insertPost, latestPosts } from "./social/posts";
+import * as tiktok from "./social/tiktok";
+import { accountNames, deleteAccount, type AccountPlatform, type Platform } from "./social/tokens";
+import { AccountsPage, SocialSection } from "./views/Social";
 
 const app = new Hono<AppEnv>();
 
@@ -57,7 +65,7 @@ ui.use("*", requireAccess);
 
 ui.get("/", async (c) => {
   const review = c.req.query("review");
-  const clips = await db.listClips(c.env.DB, { review: review || undefined });
+  const [clips, posts] = await Promise.all([db.listClips(c.env.DB, { review: review || undefined }), latestPosts(c.env.DB)]);
   const filter = (v: string, label: string) => (
     <a class={`btn ${(review ?? "") === v ? "on" : ""}`} href={v ? `/?review=${v}` : "/"}>{label}</a>
   );
@@ -67,7 +75,7 @@ ui.get("/", async (c) => {
       <div class="filters">
         {filter("", "All")}{filter("pending", "To review")}{filter("approved", "Approved")}{filter("rejected", "Rejected")}
       </div>
-      <ClipGrid clips={clips} />
+      <ClipGrid clips={clips} posts={posts} />
     </Layout>,
   );
 });
@@ -172,7 +180,9 @@ ui.get("/sources/:id", async (c) => {
   if (!source) return c.notFound();
   const { jobs, error: batchError } = await syncBatch(c.env, [source]);
   // syncBatch may have just marked it failed, so read clips/events after it.
-  const [clips, events] = await Promise.all([db.listClips(c.env.DB, { source: id }), db.sourceEvents(c.env.DB, id)]);
+  const [clips, events, posts] = await Promise.all([
+    db.listClips(c.env.DB, { source: id }), db.sourceEvents(c.env.DB, id), latestPosts(c.env.DB),
+  ]);
   const active = ACTIVE_STAGES.has(source.stage);
   let job = source.batch_job_id ? (jobs.get(source.batch_job_id) ?? null) : null;
   if (!job && source.batch_job_id && !active) {
@@ -203,7 +213,7 @@ ui.get("/sources/:id", async (c) => {
       {source.error ? <div class="err">{source.error}</div> : null}
       {source.stage === "failed" || source.stage === "partial" ? <RetryForm id={id} clips={clips.length || 5} /> : null}
       <h2>Clips</h2>
-      <ClipGrid clips={clips} />
+      <ClipGrid clips={clips} posts={posts} />
       <h2>Activity</h2>
       <table>
         <tbody>
@@ -235,13 +245,149 @@ ui.post("/sources/:id/retry", async (c) => {
 async function renderClip(c: Context<AppEnv>, id: string, flash?: string) {
   const clip = await db.getClip(c.env.DB, id);
   if (!clip) return c.notFound();
-  const source = await db.getSource(c.env.DB, clip.source_id);
+  await advancePending(c.env, id).catch(() => {}); // the cron does this too; this just makes the page current
+  const [source, posts, accounts] = await Promise.all([
+    db.getSource(c.env.DB, clip.source_id), clipPosts(c.env.DB, id), accountNames(c.env),
+  ]);
+  const credit = source?.credit ?? null;
+  // TikTok requires showing the creator's own name and privacy options before a direct post.
+  let creator: tiktok.CreatorInfo | null = null;
+  let creatorError: string | undefined;
+  if (accounts.tiktok) {
+    try {
+      creator = await tiktok.creatorInfo(c.env);
+    } catch (err) {
+      creatorError = err instanceof Error ? err.message : String(err);
+    }
+  }
+  const captions = { tiktok: captionFor("tiktok", clip, credit), instagram: captionFor("instagram", clip, credit) };
   return c.html(
-    <Layout title={clip.title ?? id} email={c.get("email")}>
-      <ClipDetail clip={clip} credit={source?.credit ?? null} flash={flash} />
+    <Layout title={clip.title ?? id} email={c.get("email")} refresh={posts.some((p) => p.status === "processing")}>
+      <ClipDetail
+        clip={clip}
+        credit={credit}
+        youtubeChannel={accounts.youtube ?? null}
+        flash={flash}
+        social={
+          <SocialSection clip={clip} accounts={accounts} captions={captions} posts={posts} creator={creator}
+            creatorError={creatorError} credit={credit} />
+        }
+      />
     </Layout>,
   );
 }
+
+const PLATFORMS: Platform[] = ["tiktok", "instagram"];
+const isPlatform = (p: string): p is Platform => (PLATFORMS as string[]).includes(p);
+const isAccount = (p: string): p is AccountPlatform => p === "youtube" || isPlatform(p);
+const AUTH = { youtube, tiktok, instagram } as const;
+
+// Save / reset a platform caption, or post the clip.
+ui.post("/clips/:id/social/:platform", async (c) => {
+  const id = c.req.param("id");
+  const platform = c.req.param("platform");
+  if (!isPlatform(platform)) return c.notFound();
+  const clip = await db.getClip(c.env.DB, id);
+  if (!clip) return c.notFound();
+  const f = await c.req.parseBody();
+  const action = String(f.action ?? "");
+  const typed = String(f.caption ?? "").replace(/\r\n/g, "\n").trim().slice(0, CAPTION_MAX);
+  const saved = savedCaptions(clip);
+  const back = (msg: string) => c.redirect(`/clips/${id}?flash=${encodeURIComponent(msg)}`, 303);
+
+  if (action === "reset") {
+    delete saved[platform];
+    await db.updateClip(c.env.DB, id, { captions: JSON.stringify(saved) });
+    return back("Caption reset to auto");
+  }
+  const source = await db.getSource(c.env.DB, clip.source_id);
+  const credit = source?.credit ?? null;
+  // Only store it as the user's own caption if it differs from the auto one.
+  const custom = typed && typed !== captionFor(platform, { ...clip, captions: "{}" }, credit).text;
+  if (custom) saved[platform] = typed;
+  else delete saved[platform];
+  await db.updateClip(c.env.DB, id, { captions: JSON.stringify(saved) });
+  if (action === "save") return back("Caption saved");
+  if (action !== "post") return c.text("bad action", 400);
+  if (!clip.video_key) return back("This clip isn't rendered yet");
+
+  const caption = withCredit(typed || captionFor(platform, clip, credit).text, credit);
+  let mode = "reel";
+  let privacy: string | null = null;
+  try {
+    let remoteId: string;
+    if (platform === "tiktok") {
+      mode = f.mode === "draft" ? "draft" : "direct";
+      privacy = mode === "direct" ? String(f.privacy ?? "") : null;
+      if (mode === "direct" && !privacy) return back("Choose who can view the TikTok first");
+      remoteId = await tiktok.post(c.env, clip.video_key, {
+        mode: mode as "direct" | "draft", caption, privacy: privacy ?? "",
+        allowComments: f.allow_comments === "1", allowDuet: f.allow_duet === "1", allowStitch: f.allow_stitch === "1",
+      });
+    } else {
+      remoteId = await instagram.post(c.env, clip.video_key, caption, f.share_to_feed === "1");
+    }
+    await insertPost(c.env.DB, { clip_id: id, platform, mode, caption, privacy, remote_id: remoteId });
+    return back(platform === "tiktok" ? "Uploaded to TikTok; processing" : "Sent to Instagram; processing (usually 1–3 min)");
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(JSON.stringify({ msg: "social post failed", clip: id, platform, error: msg }));
+    await insertPost(c.env.DB, { clip_id: id, platform, mode, caption, privacy, status: "failed", error: msg.slice(0, 1000) });
+    return back(`${platform === "tiktok" ? "TikTok" : "Instagram"} post failed: ${msg.slice(0, 300)}`);
+  }
+});
+
+// ── Connected accounts (OAuth). The callback is also behind Access: the browser carries the login.
+ui.get("/accounts", async (c) =>
+  c.html(
+    <Layout title="Accounts" email={c.get("email")}>
+      <AccountsPage
+        accounts={await accountNames(c.env)}
+        configured={{
+          youtube: !!(c.env.YT_CLIENT_ID && c.env.YT_CLIENT_SECRET && c.env.TOKEN_ENC_KEY),
+          tiktok: !!(c.env.TIKTOK_CLIENT_KEY && c.env.TIKTOK_CLIENT_SECRET && c.env.TOKEN_ENC_KEY),
+          instagram: !!(c.env.IG_APP_ID && c.env.IG_APP_SECRET && c.env.TOKEN_ENC_KEY && c.env.R2_ACCESS_KEY_ID),
+        }}
+        flash={c.req.query("flash")}
+      />
+    </Layout>,
+  ),
+);
+
+const redirectUri = (c: Context<AppEnv>, p: AccountPlatform) => `${new URL(c.req.url).origin}/oauth/${p}/callback`;
+
+ui.get("/oauth/:platform/start", (c) => {
+  const p = c.req.param("platform");
+  if (!isAccount(p)) return c.notFound();
+  const state = crypto.randomUUID();
+  setCookie(c, `oauth_${p}`, state, { httpOnly: true, secure: true, sameSite: "Lax", path: "/oauth", maxAge: 600 });
+  const url = AUTH[p].authorizeUrl(c.env, redirectUri(c, p), state);
+  return c.redirect(url, 302);
+});
+
+ui.get("/oauth/:platform/callback", async (c) => {
+  const p = c.req.param("platform");
+  if (!isAccount(p)) return c.notFound();
+  const back = (msg: string) => c.redirect(`/accounts?flash=${encodeURIComponent(msg)}`, 303);
+  const expected = getCookie(c, `oauth_${p}`);
+  deleteCookie(c, `oauth_${p}`, { path: "/oauth" });
+  if (!expected || c.req.query("state") !== expected) return back("Login expired or was tampered with; try again");
+  const code = c.req.query("code");
+  if (!code) return back(`${p} login cancelled: ${c.req.query("error_description") ?? c.req.query("error") ?? "no code"}`);
+  try {
+    const acct = await AUTH[p].connect(c.env, code, redirectUri(c, p));
+    return back(`Connected ${p} as ${acct.accountName ?? acct.accountId}`);
+  } catch (err) {
+    return back(`Couldn't connect: ${err instanceof Error ? err.message : String(err)}`);
+  }
+});
+
+ui.post("/accounts/:platform/disconnect", async (c) => {
+  const p = c.req.param("platform");
+  if (!isAccount(p)) return c.notFound();
+  await deleteAccount(c.env, p);
+  return c.redirect("/accounts?flash=Disconnected", 303);
+});
 
 ui.get("/clips/:id", (c) => renderClip(c, c.req.param("id"), c.req.query("flash")));
 
@@ -303,4 +449,10 @@ ui.get("/media/*", async (c) => {
 
 app.route("/", ui);
 
-export default app;
+export default {
+  fetch: app.fetch,
+  // Every minute: finish TikTok/Instagram posts still processing; keep the Instagram token from expiring.
+  async scheduled(_event, env, ctx) {
+    ctx.waitUntil(Promise.all([advancePending(env), instagram.keepAlive(env)]).then(() => undefined));
+  },
+} satisfies ExportedHandler<Env>;
