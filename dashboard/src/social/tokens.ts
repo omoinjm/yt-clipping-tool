@@ -1,4 +1,4 @@
-/** Connected TikTok / Instagram accounts, stored in D1 with tokens encrypted (AES-GCM, TOKEN_ENC_KEY). */
+/** Connected accounts per channel and platform, stored in D1 with tokens encrypted (AES-GCM, TOKEN_ENC_KEY). */
 
 /** Where clips are posted through the posts table. */
 export type Platform = "tiktok" | "instagram";
@@ -6,6 +6,7 @@ export type Platform = "tiktok" | "instagram";
 export type AccountPlatform = Platform | "youtube";
 
 export type Account = {
+  channelId: string;
   platform: AccountPlatform;
   accountId: string;
   accountName: string | null;
@@ -16,7 +17,7 @@ export type Account = {
 };
 
 type Row = {
-  platform: AccountPlatform; account_id: string; account_name: string | null; access_token: string;
+  channel_id: string; platform: AccountPlatform; account_id: string; account_name: string | null; access_token: string;
   access_expires_at: number; refresh_token: string | null; refresh_expires_at: number | null; updated_at: string;
 };
 
@@ -50,10 +51,11 @@ async function open(env: Env, sealed: string): Promise<string> {
   return new TextDecoder().decode(pt);
 }
 
-export async function getAccount(env: Env, platform: AccountPlatform): Promise<Account | null> {
-  const r = await env.DB.prepare("SELECT * FROM oauth_tokens WHERE platform = ?").bind(platform).first<Row>();
+export async function getAccount(env: Env, channelId: string, platform: AccountPlatform): Promise<Account | null> {
+  const r = await env.DB.prepare("SELECT * FROM oauth_tokens WHERE channel_id = ? AND platform = ?").bind(channelId, platform).first<Row>();
   if (!r) return null;
   return {
+    channelId,
     platform,
     accountId: r.account_id,
     accountName: r.account_name,
@@ -64,26 +66,38 @@ export async function getAccount(env: Env, platform: AccountPlatform): Promise<A
   };
 }
 
-/** Name of the connected account (no decryption), for the UI. */
-export async function accountNames(env: Env): Promise<Partial<Record<AccountPlatform, string>>> {
-  const { results } = await env.DB.prepare("SELECT platform, account_id, account_name FROM oauth_tokens")
-    .all<{ platform: AccountPlatform; account_id: string; account_name: string | null }>();
+export type AccountNames = Partial<Record<AccountPlatform, string>>;
+
+/** Names of a channel's connected accounts (no decryption), for the UI. */
+export async function accountNames(env: Env, channelId: string | null): Promise<AccountNames> {
+  if (!channelId) return {};
+  const { results } = await env.DB.prepare("SELECT platform, account_id, account_name FROM oauth_tokens WHERE channel_id = ?")
+    .bind(channelId).all<{ platform: AccountPlatform; account_id: string; account_name: string | null }>();
   return Object.fromEntries(results.map((r) => [r.platform, r.account_name ?? r.account_id]));
+}
+
+/** Every channel's connected account names: channel id → platform → name. */
+export async function allAccountNames(env: Env): Promise<Map<string, AccountNames>> {
+  const { results } = await env.DB.prepare("SELECT channel_id, platform, account_id, account_name FROM oauth_tokens")
+    .all<{ channel_id: string; platform: AccountPlatform; account_id: string; account_name: string | null }>();
+  const out = new Map<string, AccountNames>();
+  for (const r of results) out.set(r.channel_id, { ...out.get(r.channel_id), [r.platform]: r.account_name ?? r.account_id });
+  return out;
 }
 
 export async function saveAccount(env: Env, a: Account): Promise<void> {
   await env.DB.prepare(
-    `INSERT INTO oauth_tokens (platform, account_id, account_name, access_token, access_expires_at, refresh_token, refresh_expires_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT(platform) DO UPDATE SET account_id = excluded.account_id, account_name = excluded.account_name,
+    `INSERT INTO oauth_tokens (channel_id, platform, account_id, account_name, access_token, access_expires_at, refresh_token, refresh_expires_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(channel_id, platform) DO UPDATE SET account_id = excluded.account_id, account_name = excluded.account_name,
        access_token = excluded.access_token, access_expires_at = excluded.access_expires_at,
        refresh_token = excluded.refresh_token, refresh_expires_at = excluded.refresh_expires_at, updated_at = datetime('now')`,
   ).bind(
-    a.platform, a.accountId, a.accountName, await seal(env, a.accessToken), a.accessExpiresAt,
+    a.channelId, a.platform, a.accountId, a.accountName, await seal(env, a.accessToken), a.accessExpiresAt,
     a.refreshToken ? await seal(env, a.refreshToken) : null, a.refreshExpiresAt,
   ).run();
 }
 
-export async function deleteAccount(env: Env, platform: AccountPlatform): Promise<void> {
-  await env.DB.prepare("DELETE FROM oauth_tokens WHERE platform = ?").bind(platform).run();
+export async function deleteAccount(env: Env, channelId: string, platform: AccountPlatform): Promise<void> {
+  await env.DB.prepare("DELETE FROM oauth_tokens WHERE channel_id = ? AND platform = ?").bind(channelId, platform).run();
 }

@@ -1,7 +1,9 @@
 import { createRemoteJWKSet, jwtVerify } from "jose";
 import type { MiddlewareHandler } from "hono";
 
-type AppEnv = { Bindings: Env; Variables: { email: string } };
+import type { ChannelRow } from "./channels";
+
+type AppEnv = { Bindings: Env; Variables: { email: string; channels: ChannelRow[]; scope: string } };
 
 // One JWKS fetcher per team domain; jose caches the keys internally (immutable config, not request state).
 const jwksByTeam = new Map<string, ReturnType<typeof createRemoteJWKSet>>();

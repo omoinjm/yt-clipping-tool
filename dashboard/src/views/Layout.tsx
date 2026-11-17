@@ -1,7 +1,8 @@
 import type { Child } from "hono/jsx";
 import { raw } from "hono/html";
+import type { ChannelRow } from "../channels";
 
-export type Nav = "clips" | "sources" | "new" | "submissions" | "metrics" | "accounts" | "users";
+export type Nav = "clips" | "sources" | "new" | "submissions" | "metrics" | "channels" | "users";
 
 const CSS = `
 :root{
@@ -30,8 +31,9 @@ code{font:12.5px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--pa
 .top nav a{padding:6px 11px;border-radius:8px;color:var(--muted);text-decoration:none;white-space:nowrap;font-weight:500}
 .top nav a:hover{background:var(--panel-2);color:var(--text)}
 .top nav a.on{background:var(--panel-2);color:var(--text)}
-.top .me{margin-left:auto;color:var(--muted);font-size:12.5px;white-space:nowrap}
-@media (max-width:640px){.top .me{display:none}.top .in{gap:10px}}
+.top .me{color:var(--muted);font-size:12.5px;white-space:nowrap}
+.switcher{margin-left:auto}.switcher select{width:auto;max-width:190px;padding:6px 30px 6px 10px;font-size:13px;font-weight:600;background-color:var(--panel)}
+@media (max-width:640px){.top .me{display:none}.top .in{gap:10px;flex-wrap:wrap}.switcher{order:3;width:100%}.switcher select{max-width:none;width:100%}}
 
 main{max-width:1240px;margin:0 auto;padding:22px 16px 60px}
 h1{font-size:22px;line-height:1.25;margin:0;letter-spacing:-.01em}
@@ -120,6 +122,9 @@ dialog.modal .mf{display:flex;justify-content:flex-end;gap:8px;padding:16px 20px
 .ov.score{color:var(--accent)}
 .card .meta{padding:10px 12px 12px;display:flex;flex-direction:column;gap:7px}
 .card .t{font-weight:600;line-height:1.35;font-size:13.5px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.chip{display:inline-block;font-size:11.5px;font-weight:600;padding:2px 8px;border-radius:6px;background:var(--panel-2);color:var(--text);white-space:nowrap;max-width:140px;overflow:hidden;text-overflow:ellipsis}
+.chip.dim{color:var(--muted);font-weight:500}.chip.strong{font-size:13px;padding:4px 10px;box-shadow:inset 0 0 0 1px var(--line-2)}
+details.inline summary{cursor:pointer;list-style:none;text-decoration:underline dotted}details.inline summary::-webkit-details-marker{display:none}
 .empty{border:1px dashed var(--line-2);border-radius:var(--radius);padding:28px;text-align:center;color:var(--muted)}
 
 /* clip page */
@@ -247,11 +252,14 @@ const NAV: [Nav, string, string][] = [
   ["new", "/sources/new", "New source"],
   ["submissions", "/submissions", "Submissions"],
   ["metrics", "/metrics", "Metrics"],
-  ["accounts", "/accounts", "Accounts"],
+  ["channels", "/channels", "Channels"],
   ["users", "/users", "Users"],
 ];
 
-export function Layout(props: { title: string; email: string; nav?: Nav; refresh?: boolean; children: Child }) {
+export function Layout(props: {
+  title: string; email: string; nav?: Nav; refresh?: boolean; children: Child;
+  channels?: ChannelRow[]; scope?: string;
+}) {
   return (
     <html lang="en">
       <head>
@@ -278,6 +286,17 @@ export function Layout(props: { title: string; email: string; nav?: Nav; refresh
                 <a href={href} class={props.nav === key ? "on" : undefined} aria-current={props.nav === key ? "page" : undefined}>{label}</a>
               ))}
             </nav>
+            {props.channels ? (
+              /* Channel switcher: scopes Clips and Metrics to one channel (or unassigned clips). */
+              <form method="post" action="/scope" class="switcher">
+                <select name="scope" onchange="this.form.submit()" aria-label="Channel">
+                  <option value="" selected={!props.scope}>All channels</option>
+                  {props.channels.map((ch) => <option value={ch.id} selected={props.scope === ch.id}>{ch.name}</option>)}
+                  <option value="none" selected={props.scope === "none"}>Unassigned clips</option>
+                </select>
+                <noscript><button class="sm">Go</button></noscript>
+              </form>
+            ) : null}
             <span class="me">{props.email}</span>
           </div>
         </header>

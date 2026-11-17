@@ -1,5 +1,6 @@
 import type { Child } from "hono/jsx";
 import type { ClipRow } from "../db";
+import type { ChannelRow } from "../channels";
 import type { PostRow } from "../social/posts";
 import type { Platform } from "../social/tokens";
 import { Flash, Pill } from "./Layout";
@@ -44,7 +45,11 @@ export const PfMark = (p: { pf: AnyPlatform; s: PState }) => (
   <span class={`pf ${p.s.state}`} title={`${PF[p.pf].name}: ${p.s.label}`}><Logo pf={p.pf} /></span>
 );
 
-export function ClipGrid(props: { clips: ClipRow[]; posts?: LatestPosts; metrics?: Map<string, ClipMetrics>; empty?: Child }) {
+export function ClipGrid(props: {
+  clips: ClipRow[]; posts?: LatestPosts; metrics?: Map<string, ClipMetrics>; empty?: Child;
+  channels?: ChannelRow[]; showChannel?: boolean;
+}) {
+  const chName = (id: string | null) => (id ? (props.channels?.find((x) => x.id === id)?.name ?? id) : null);
   if (props.clips.length === 0)
     return <div class="empty">{props.empty ?? <>No clips yet. <a href="/sources/new">Add a source</a> to get some.</>}</div>;
   return (
@@ -68,6 +73,9 @@ export function ClipGrid(props: { clips: ClipRow[]; posts?: LatestPosts; metrics
               <span class="row">
                 <Pill v={c.review} />
                 {odd ? <Pill v={c.stage} /> : null}
+                {props.showChannel !== false && props.channels ? (
+                  c.channel_id ? <span class="chip" title="Channel">{chName(c.channel_id)}</span> : <span class="chip dim">unassigned</span>
+                ) : null}
               </span>
             </div>
           </a>
@@ -121,6 +129,7 @@ export function ClipPage(props: {
   flash?: string;
   states: Record<AnyPlatform, PState>;
   metrics?: ClipMetrics;
+  channel: { current: ChannelRow | null; all: ChannelRow[]; locked: boolean };
   nav: { prev?: string; next?: string; index: number; total: number };
   defaultTab: string;
   panels: { youtube: Child; tiktok: Child; instagram: Child };
@@ -162,6 +171,8 @@ export function ClipPage(props: {
               {c.duration ? `${Math.round(c.duration)}s · ` : ""}source {c.start.toFixed(1)}–{c.end.toFixed(1)}s{c.layout ? ` · ${c.layout} layout` : ""}
             </span>
           </div>
+
+          <ChannelBox clipId={c.id} {...props.channel} />
 
           <div class="status">
             {(["youtube", "tiktok", "instagram"] as const).map((pf) => {
@@ -217,5 +228,39 @@ export function ClipPage(props: {
         </div>
       </div>
     </>
+  );
+}
+
+/** Which channel the clip belongs to. Unassigned clips get a picker; it locks once the clip has gone out. */
+function ChannelBox(props: { clipId: string; current: ChannelRow | null; all: ChannelRow[]; locked: boolean }) {
+  const picker = (label: string) => (
+    <form method="post" action={`/clips/${props.clipId}/channel`} class="row" style="flex-wrap:nowrap">
+      <select name="channel_id" style="width:auto;min-width:180px">
+        <option value="" selected={!props.current}>— Unassigned —</option>
+        {props.all.map((ch) => <option value={ch.id} selected={props.current?.id === ch.id}>{ch.name}{ch.niche ? ` · ${ch.niche}` : ""}</option>)}
+      </select>
+      <button type="submit" class="sm primary">{label}</button>
+    </form>
+  );
+  if (!props.current)
+    return (
+      <div class="callout" style="margin:16px 0 0;display:flex;flex-direction:column;gap:10px">
+        <span><b style="color:var(--text)">Not assigned to a channel yet.</b> Pick the channel this clip fits; it will then show and post only there.</span>
+        {props.all.length ? picker("Assign") : <span>No channels yet: <a href="/channels">create one</a>.</span>}
+      </div>
+    );
+  return (
+    <div class="row" style="margin-top:14px;gap:10px">
+      <span class="muted small">Channel</span>
+      <span class="chip strong">{props.current.name}</span>
+      {props.locked ? (
+        <span class="muted small" title="Posts and stats stay with the account this clip went out on">🔒 locked: already published</span>
+      ) : (
+        <details class="inline">
+          <summary class="muted small">change</summary>
+          <div style="margin-top:8px">{picker("Move")}</div>
+        </details>
+      )}
+    </div>
   );
 }

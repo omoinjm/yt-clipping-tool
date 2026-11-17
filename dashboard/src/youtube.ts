@@ -57,21 +57,21 @@ async function myChannel(token: string): Promise<{ id: string; name: string }> {
   return { id: ch.id, name: ch.snippet.customUrl ? `${ch.snippet.customUrl} (${ch.snippet.title})` : ch.snippet.title };
 }
 
-export async function connect(env: Env, code: string, redirectUri: string): Promise<Account> {
+export async function connect(env: Env, ch: string, code: string, redirectUri: string): Promise<Account> {
   const t = await tokenRequest(env, { code, grant_type: "authorization_code", redirect_uri: redirectUri });
   if (!t.refresh_token) throw new Error("Google returned no refresh token; remove the app's access at myaccount.google.com/permissions and connect again");
-  const ch = await myChannel(t.access_token);
+  const yt = await myChannel(t.access_token);
   const acct: Account = {
-    platform: "youtube", accountId: ch.id, accountName: ch.name, accessToken: t.access_token,
+    channelId: ch, platform: "youtube", accountId: yt.id, accountName: yt.name, accessToken: t.access_token,
     accessExpiresAt: Date.now() + t.expires_in * 1000, refreshToken: t.refresh_token, refreshExpiresAt: null,
   };
   await saveAccount(env, acct);
   return acct;
 }
 
-async function accessToken(env: Env): Promise<string> {
-  const acct = await getAccount(env, "youtube");
-  if (!acct?.refreshToken) throw new Error("YouTube isn't connected: open Accounts → Connect YouTube");
+async function accessToken(env: Env, ch: string): Promise<string> {
+  const acct = await getAccount(env, ch, "youtube");
+  if (!acct?.refreshToken) throw new Error("YouTube isn't connected for this channel: open Channels → Connect YouTube");
   if (acct.accessExpiresAt - Date.now() > 5 * 60_000) return acct.accessToken;
   const t = await tokenRequest(env, { grant_type: "refresh_token", refresh_token: acct.refreshToken });
   await saveAccount(env, { ...acct, accessToken: t.access_token, accessExpiresAt: Date.now() + t.expires_in * 1000 });
@@ -81,10 +81,10 @@ async function accessToken(env: Env): Promise<string> {
 export type Stats = { views?: number; likes?: number; comments?: number; shares?: number; saves?: number };
 
 /** Statistics for up to 50 of the channel's videos (works for private videos too). */
-export async function videoStats(env: Env, ids: string[]): Promise<Map<string, Stats>> {
+export async function videoStats(env: Env, ch: string, ids: string[]): Promise<Map<string, Stats>> {
   const out = new Map<string, Stats>();
   if (!ids.length) return out;
-  const token = await accessToken(env);
+  const token = await accessToken(env, ch);
   const res = await fetch(`https://www.googleapis.com/youtube/v3/videos?part=statistics&id=${ids.slice(0, 50).join(",")}`, {
     headers: { Authorization: `Bearer ${token}` },
   });
@@ -100,6 +100,7 @@ export async function videoStats(env: Env, ids: string[]): Promise<Map<string, S
 /** Stream a clip from R2 into a YouTube resumable upload. Returns the YouTube video id. */
 export async function uploadToYouTube(
   env: Env,
+  ch: string,
   clip: ClipRow,
   credit: string | null,
   privacy: "private" | "unlisted" | "public",
@@ -108,7 +109,7 @@ export async function uploadToYouTube(
   const head = await env.CLIPS.head(clip.video_key);
   if (!head) throw new Error(`missing R2 object ${clip.video_key}`);
 
-  const token = await accessToken(env);
+  const token = await accessToken(env, ch);
   const tags: string[] = JSON.parse(clip.tags || "[]");
   const init = await fetch(
     "https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status",

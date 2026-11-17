@@ -19,15 +19,26 @@ export function creditLine(credit: string | null): string | null {
   return credit ? `Credit: ${credit}` : null;
 }
 
-/** Caption built from the clip's (Claude-written, user-editable) title, description and tags. */
-export function autoCaption(platform: Platform, clip: ClipRow, credit: string | null): string {
+/** The clip's own hashtags followed by its channel's niche hashtags, without duplicates. */
+function tagLine(tags: string[], channelTags: string): string {
+  const own = hashtags(tags, 5).split(" ").filter(Boolean);
+  const seen = new Set(own.map((t) => t.toLowerCase()));
+  const extra = channelTags.split(" ").filter((t) => t && !seen.has(t.toLowerCase()) && seen.add(t.toLowerCase()));
+  return [...own, ...extra].join(" ");
+}
+
+/**
+ * Caption built from the clip's (Claude-written, user-editable) title, description and tags,
+ * plus the channel's default hashtags.
+ */
+export function autoCaption(platform: Platform, clip: ClipRow, credit: string | null, channelTags = ""): string {
   const tags: string[] = JSON.parse(clip.tags || "[]");
   const parts =
     platform === "tiktok"
       ? // TikTok: short; the hook line does the work, hashtags help discovery.
-        [clip.title, creditLine(credit), hashtags(tags, 5)]
+        [clip.title, creditLine(credit), tagLine(tags, channelTags)]
       : // Instagram Reels: room for the description; keep hashtags few (3–5 perform best, 30 max).
-        [clip.title, clip.description, creditLine(credit), hashtags(tags, 5)];
+        [clip.title, clip.description, creditLine(credit), tagLine(tags, channelTags)];
   return parts.map((p) => (p ?? "").trim()).filter(Boolean).join("\n\n").slice(0, CAPTION_MAX);
 }
 
@@ -40,9 +51,9 @@ export function savedCaptions(clip: ClipRow): Partial<Record<Platform, string>> 
 }
 
 /** The caption to show / post: the user's own if they saved one, else the auto caption. */
-export function captionFor(platform: Platform, clip: ClipRow, credit: string | null): { text: string; custom: boolean } {
+export function captionFor(platform: Platform, clip: ClipRow, credit: string | null, channelTags = ""): { text: string; custom: boolean } {
   const own = savedCaptions(clip)[platform];
-  return own ? { text: own, custom: true } : { text: autoCaption(platform, clip, credit), custom: false };
+  return own ? { text: own, custom: true } : { text: autoCaption(platform, clip, credit, channelTags), custom: false };
 }
 
 /** Credited sources (CC BY, permission granted) must name the creator; add the line back if it was edited out. */

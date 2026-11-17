@@ -70,15 +70,15 @@ async function tokenRequest(env: Env, params: Record<string, string>): Promise<T
   return t;
 }
 
-function toAccount(t: TokenResp, name: string | null): Account {
+function toAccount(ch: string, t: TokenResp, name: string | null): Account {
   const now = Date.now();
   return {
-    platform: "tiktok", accountId: t.open_id, accountName: name, accessToken: t.access_token,
+    channelId: ch, platform: "tiktok", accountId: t.open_id, accountName: name, accessToken: t.access_token,
     accessExpiresAt: now + t.expires_in * 1000, refreshToken: t.refresh_token, refreshExpiresAt: now + t.refresh_expires_in * 1000,
   };
 }
 
-export async function connect(env: Env, code: string, redirectUri: string): Promise<Account> {
+export async function connect(env: Env, ch: string, code: string, redirectUri: string): Promise<Account> {
   const t = await tokenRequest(env, { code, grant_type: "authorization_code", redirect_uri: redirectUri });
   let name: string | null = null;
   try {
@@ -87,24 +87,24 @@ export async function connect(env: Env, code: string, redirectUri: string): Prom
   } catch {
     /* name is cosmetic */
   }
-  const acct = toAccount(t, name);
+  const acct = toAccount(ch, t, name);
   await saveAccount(env, acct);
   return acct;
 }
 
 /** A valid access token (24 h lifetime), refreshed with the 365-day refresh token when needed. */
-async function accessToken(env: Env): Promise<{ token: string; acct: Account }> {
-  const acct = await getAccount(env, "tiktok");
-  if (!acct) throw new Error("TikTok isn't connected: open Accounts → Connect TikTok");
+async function accessToken(env: Env, ch: string): Promise<{ token: string; acct: Account }> {
+  const acct = await getAccount(env, ch, "tiktok");
+  if (!acct) throw new Error("TikTok isn't connected for this channel: open Channels → Connect TikTok");
   if (acct.accessExpiresAt - Date.now() > 5 * 60_000) return { token: acct.accessToken, acct };
   if (!acct.refreshToken) throw new Error("TikTok session expired: reconnect on the Accounts page");
-  const fresh = toAccount(await tokenRequest(env, { grant_type: "refresh_token", refresh_token: acct.refreshToken }), acct.accountName);
+  const fresh = toAccount(ch, await tokenRequest(env, { grant_type: "refresh_token", refresh_token: acct.refreshToken }), acct.accountName);
   await saveAccount(env, fresh);
   return { token: fresh.accessToken, acct: fresh };
 }
 
-export async function creatorInfo(env: Env): Promise<CreatorInfo> {
-  const { token } = await accessToken(env);
+export async function creatorInfo(env: Env, ch: string): Promise<CreatorInfo> {
+  const { token } = await accessToken(env, ch);
   return call<CreatorInfo>(token, "/v2/post/publish/creator_info/query/", {});
 }
 
@@ -125,8 +125,8 @@ export type TikTokPostInput = {
 };
 
 /** Upload the clip from R2 and start the post. Returns the publish_id to poll. */
-export async function post(env: Env, videoKey: string, input: TikTokPostInput): Promise<string> {
-  const { token } = await accessToken(env);
+export async function post(env: Env, ch: string, videoKey: string, input: TikTokPostInput): Promise<string> {
+  const { token } = await accessToken(env, ch);
   const head = await env.CLIPS.head(videoKey);
   if (!head) throw new Error(`missing R2 object ${videoKey}`);
   const { chunkSize, count } = chunkPlan(head.size);
@@ -178,8 +178,8 @@ export async function post(env: Env, videoKey: string, input: TikTokPostInput): 
 export type TikTokStatus = { status: string; fail_reason?: string; publicaly_available_post_id?: (string | number)[] };
 
 /** Poll a post. When it's public, also returns its link (private posts have no public id). */
-export async function status(env: Env, publishId: string): Promise<TikTokStatus & { postId?: string; url?: string }> {
-  const { token } = await accessToken(env);
+export async function status(env: Env, ch: string, publishId: string): Promise<TikTokStatus & { postId?: string; url?: string }> {
+  const { token } = await accessToken(env, ch);
   const s = await call<TikTokStatus>(token, "/v2/post/publish/status/fetch/", { publish_id: publishId });
   const id = s.publicaly_available_post_id?.[0];
   if (id == null) return s;
@@ -193,10 +193,10 @@ export async function status(env: Env, publishId: string): Promise<TikTokStatus 
 }
 
 /** Public stats for up to 20 posted videos. Needs the video.list scope (reconnect TikTok after adding it). */
-export async function videoStats(env: Env, ids: string[]): Promise<Map<string, import("../youtube").Stats>> {
+export async function videoStats(env: Env, ch: string, ids: string[]): Promise<Map<string, import("../youtube").Stats>> {
   const out = new Map<string, import("../youtube").Stats>();
   if (!ids.length) return out;
-  const { token } = await accessToken(env);
+  const { token } = await accessToken(env, ch);
   type V = { id: string; view_count?: number; like_count?: number; comment_count?: number; share_count?: number };
   const data = await call<{ videos: V[] }>(token, "/v2/video/query/?fields=id,view_count,like_count,comment_count,share_count", {
     filters: { video_ids: ids.slice(0, 20) },

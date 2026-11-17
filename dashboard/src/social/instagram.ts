@@ -35,7 +35,7 @@ export function authorizeUrl(env: Env, redirectUri: string, state: string): stri
   return `https://www.facebook.com/dialog/oauth?${q}`;
 }
 
-export async function connect(env: Env, code: string, redirectUri: string): Promise<Account> {
+export async function connect(env: Env, ch: string, code: string, redirectUri: string): Promise<Account> {
   const q = new URLSearchParams({
     client_id: env.META_APP_ID, client_secret: env.META_APP_SECRET, redirect_uri: redirectUri, code: code.replace(/#_$/, ""),
   });
@@ -50,16 +50,16 @@ export async function connect(env: Env, code: string, redirectUri: string): Prom
   const ig = data?.[0];
   if (!ig) throw new Error("No Instagram account was shared with the app. Connect again and select the Instagram account.");
   const acct: Account = {
-    platform: "instagram", accountId: ig.id, accountName: ig.username, accessToken: t.access_token,
+    channelId: ch, platform: "instagram", accountId: ig.id, accountName: ig.username, accessToken: t.access_token,
     accessExpiresAt: t.expires_in ? Date.now() + t.expires_in * 1000 : NEVER, refreshToken: null, refreshExpiresAt: null,
   };
   await saveAccount(env, acct);
   return acct;
 }
 
-async function account(env: Env): Promise<Account> {
-  const acct = await getAccount(env, "instagram");
-  if (!acct) throw new Error("Instagram isn't connected: open Accounts → Connect Instagram");
+async function account(env: Env, ch: string): Promise<Account> {
+  const acct = await getAccount(env, ch, "instagram");
+  if (!acct) throw new Error("Instagram isn't connected for this channel: open Channels → Connect Instagram");
   if (acct.accessExpiresAt <= Date.now()) throw new Error("Instagram access expired: reconnect on the Accounts page");
   return acct;
 }
@@ -75,8 +75,8 @@ async function presign(env: Env, key: string, seconds = 7200): Promise<string> {
 }
 
 /** Create the Reel container. Returns its id; Instagram processes the video asynchronously. */
-export async function post(env: Env, videoKey: string, caption: string, shareToFeed: boolean): Promise<string> {
-  const acct = await account(env);
+export async function post(env: Env, ch: string, videoKey: string, caption: string, shareToFeed: boolean): Promise<string> {
+  const acct = await account(env, ch);
   const container = await graph<{ id: string }>("POST", `/${acct.accountId}/media`, acct.accessToken, {
     media_type: "REELS",
     video_url: await presign(env, videoKey),
@@ -92,9 +92,10 @@ export async function post(env: Env, videoKey: string, caption: string, shareToF
  */
 export async function advance(
   env: Env,
+  ch: string,
   containerId: string,
 ): Promise<null | { ok: true; postId: string; url: string | null } | { ok: false; error: string }> {
-  const acct = await account(env);
+  const acct = await account(env, ch);
   const c = await graph<{ status_code: string; status?: string }>("GET", `/${containerId}?fields=status_code,status`, acct.accessToken);
   if (c.status_code === "IN_PROGRESS") return null;
   if (c.status_code === "ERROR" || c.status_code === "EXPIRED")
@@ -117,8 +118,8 @@ export async function advance(
 /**
  * Likes and comments always; views/shares/saves when the configuration includes instagram_manage_insights.
  */
-export async function mediaStats(env: Env, mediaId: string): Promise<import("../youtube").Stats> {
-  const acct = await account(env);
+export async function mediaStats(env: Env, ch: string, mediaId: string): Promise<import("../youtube").Stats> {
+  const acct = await account(env, ch);
   const m = await graph<{ like_count?: number; comments_count?: number }>("GET", `/${mediaId}?fields=like_count,comments_count`, acct.accessToken);
   const stats: import("../youtube").Stats = { likes: m.like_count, comments: m.comments_count };
   try {

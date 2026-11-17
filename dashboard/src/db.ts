@@ -11,6 +11,7 @@ export type ClipRow = {
   video_key: string | null; thumb_key: string | null; output_path: string | null; youtube_id: string | null;
   error: string | null; created_at: string; updated_at: string;
   captions: string; // JSON {tiktok?, instagram?}: user-written captions
+  channel_id: string | null; // which channel it belongs to; null until assigned after clipping
 };
 
 type Value = string | number | null;

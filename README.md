@@ -154,6 +154,19 @@ There's no hard cap in AWS, so the stack enforces one.
 - Only clip content you own or have written permission for. Re-uploading other people's videos risks copyright strikes and fails YouTube's "reused content" monetization policy. Captions, hooks and tight edits help, but they don't replace permission.
 - YouTube Partner Program for Shorts: 1,000 subscribers + 10M Shorts views in 90 days.
 
+## Channels
+
+A **channel** is a niche brand with its own YouTube, TikTok and Instagram accounts. Manage channels under **Channels** in the dashboard.
+- **Assign clips after clipping.** Sources and clips start unassigned. On a clip's page, pick its channel; from then on it shows under that channel and posts with that channel's accounts.
+- **The channel locks once the clip goes out.** That is, once it's uploaded, posted, drafted or posting. Its posts and stats stay with the account it went to.
+- **The header switcher** (All / a channel / Unassigned) scopes the Clips and Metrics pages.
+- Each channel's **default hashtags** are added to its clips' auto captions.
+
+Connecting a new channel's accounts needs the same app-side access as the first one:
+- **TikTok:** the account must be a Sandbox target user.
+- **Instagram:** the account must be in the njmtech business portfolio and an Instagram tester.
+- **YouTube:** pick the brand channel on Google's chooser.
+
 ## Dashboard users
 
 **Users** in the dashboard adds and removes the people who can sign in. All users have full access.

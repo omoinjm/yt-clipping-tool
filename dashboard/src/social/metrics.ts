@@ -51,13 +51,13 @@ export async function refreshMetrics(env: Env, clipId?: string): Promise<{ updat
   const db = env.DB;
   const byClip = clipId ? " AND clip_id = ?" : "";
   const yt = await (clipId
-    ? db.prepare("SELECT id AS clip_id, youtube_id AS post_id FROM clips WHERE youtube_id IS NOT NULL AND id = ?").bind(clipId)
-    : db.prepare("SELECT id AS clip_id, youtube_id AS post_id FROM clips WHERE youtube_id IS NOT NULL")
-  ).all<{ clip_id: string; post_id: string }>();
-  const latestSql = `SELECT clip_id, platform, post_id FROM posts WHERE id IN
+    ? db.prepare("SELECT id AS clip_id, youtube_id AS post_id, channel_id FROM clips WHERE youtube_id IS NOT NULL AND channel_id IS NOT NULL AND id = ?").bind(clipId)
+    : db.prepare("SELECT id AS clip_id, youtube_id AS post_id, channel_id FROM clips WHERE youtube_id IS NOT NULL AND channel_id IS NOT NULL")
+  ).all<{ clip_id: string; post_id: string; channel_id: string }>();
+  const latestSql = `SELECT clip_id, platform, post_id, channel_id FROM posts WHERE channel_id IS NOT NULL AND id IN
     (SELECT MAX(id) FROM posts WHERE status = 'published' AND post_id IS NOT NULL GROUP BY clip_id, platform)${byClip}`;
   const social = await (clipId ? db.prepare(latestSql).bind(clipId) : db.prepare(latestSql))
-    .all<{ clip_id: string; platform: "tiktok" | "instagram"; post_id: string }>();
+    .all<{ clip_id: string; platform: "tiktok" | "instagram"; post_id: string; channel_id: string }>();
 
   const stmts: D1PreparedStatement[] = [];
   const errors: string[] = [];
@@ -66,10 +66,14 @@ export async function refreshMetrics(env: Env, clipId?: string): Promise<{ updat
     for (const r of rows) stmts.push(errorStmt(db, r.clip_id, platform, err));
   };
 
+  // Each channel's stats are read with that channel's own login.
+  const byChannel = <T extends { channel_id: string }>(xs: T[]) =>
+    [...xs.reduce((m, x) => m.set(x.channel_id, [...(m.get(x.channel_id) ?? []), x]), new Map<string, T[]>())];
+
   // YouTube: 50 ids per call.
-  for (const rows of chunk(yt.results, 50)) {
+  for (const [ch, all] of byChannel(yt.results)) for (const rows of chunk(all, 50)) {
     try {
-      const stats = await youtubeStats(env, rows.map((r) => r.post_id));
+      const stats = await youtubeStats(env, ch, rows.map((r) => r.post_id));
       for (const r of rows) {
         const s = stats.get(r.post_id);
         stmts.push(s ? saveStmt(db, r.clip_id, "youtube", s) : errorStmt(db, r.clip_id, "youtube", "Video not found (deleted?)"));
@@ -79,9 +83,9 @@ export async function refreshMetrics(env: Env, clipId?: string): Promise<{ updat
     }
   }
   // TikTok: 20 ids per call.
-  for (const rows of chunk(social.results.filter((r) => r.platform === "tiktok"), 20)) {
+  for (const [ch, all] of byChannel(social.results.filter((r) => r.platform === "tiktok"))) for (const rows of chunk(all, 20)) {
     try {
-      const stats = await tiktok.videoStats(env, rows.map((r) => r.post_id));
+      const stats = await tiktok.videoStats(env, ch, rows.map((r) => r.post_id));
       for (const r of rows) {
         const s = stats.get(r.post_id);
         stmts.push(s ? saveStmt(db, r.clip_id, "tiktok", s) : errorStmt(db, r.clip_id, "tiktok", "Video not found or not public"));
@@ -93,7 +97,7 @@ export async function refreshMetrics(env: Env, clipId?: string): Promise<{ updat
   // Instagram: one call per Reel.
   for (const r of social.results.filter((x) => x.platform === "instagram")) {
     try {
-      stmts.push(saveStmt(db, r.clip_id, "instagram", await instagram.mediaStats(env, r.post_id)));
+      stmts.push(saveStmt(db, r.clip_id, "instagram", await instagram.mediaStats(env, r.channel_id, r.post_id)));
     } catch (err) {
       fail("instagram", [r], err);
     }

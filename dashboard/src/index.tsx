@@ -5,7 +5,7 @@ import { ClipGrid, ClipPage, ClipToolbar, platformStates, type ClipFilter } from
 import { ACTIVE_STAGES, Layout, Pill } from "./views/Layout";
 import { NewSourceForm } from "./views/NewSource";
 import { SourceList } from "./views/Sources";
-import { sourceKeyFor, validate, type NewSource, type Permission } from "./sources";
+import { slugify, sourceKeyFor, validate, type NewSource, type Permission } from "./sources";
 import { describeJobs, logTail, submitBatchJob, type LogLine } from "./aws";
 import { progress, syncBatch } from "./progress";
 import { LogPanel, ProgressPanel, RetryForm } from "./views/Progress";
@@ -23,8 +23,12 @@ import { captionFor, savedCaptions, withCredit, CAPTION_MAX } from "./social/cap
 import * as instagram from "./social/instagram";
 import { advancePending, clipPosts, insertPost, latestPosts } from "./social/posts";
 import * as tiktok from "./social/tiktok";
-import { accountNames, deleteAccount, type AccountPlatform, type Platform } from "./social/tokens";
-import { AccountsPage, InstagramPanel, TikTokPanel, YouTubePanel } from "./views/Social";
+import { accountNames, allAccountNames, deleteAccount, type AccountPlatform, type Platform } from "./social/tokens";
+import {
+  assignClip, CHANNEL_ID_RE, clipLocked, currentScope, deleteChannel, getChannel, inScope, listChannels, saveChannel, SCOPE_COOKIE,
+} from "./channels";
+import { ChannelsPage } from "./views/Channels";
+import { InstagramPanel, TikTokPanel, YouTubePanel } from "./views/Social";
 
 const app = new Hono<AppEnv>();
 
@@ -72,6 +76,12 @@ app.route("/u", pub);
 // ───────────── UI (behind Cloudflare Access) ─────────────
 const ui = new Hono<AppEnv>();
 ui.use("*", requireAccess);
+// Header channel switcher: every page gets the channel list and the current scope.
+ui.use("*", async (c, next) => {
+  c.set("channels", await listChannels(c.env.DB));
+  c.set("scope", currentScope(c));
+  return next();
+});
 
 ui.get("/", async (c) => {
   const f: ClipFilter = {
@@ -86,11 +96,13 @@ ui.get("/", async (c) => {
     db.listSources(c.env.DB),
     allMetrics(c.env.DB),
   ]);
-  let clips = f.notOn ? all.filter((cl) => platformStates(cl, posts.get(cl.id))[f.notOn as "youtube"].state !== "live" &&
-    platformStates(cl, posts.get(cl.id))[f.notOn as "youtube"].state !== "drafted") : all;
+  const scope = c.get("scope");
+  const scoped = all.filter((cl) => inScope(scope, cl));
+  let clips = f.notOn ? scoped.filter((cl) => platformStates(cl, posts.get(cl.id))[f.notOn as "youtube"].state !== "live" &&
+    platformStates(cl, posts.get(cl.id))[f.notOn as "youtube"].state !== "drafted") : scoped;
   if (f.sort === "score") clips = [...clips].sort((x, y) => (y.score ?? 0) - (x.score ?? 0));
   return c.html(
-    <Layout title="Clips" email={c.get("email")} nav="clips">
+    <Layout title="Clips" email={c.get("email")} channels={c.get("channels")} scope={c.get("scope")} nav="clips">
       <div class="page-head">
         <div>
           <h1>Clips</h1>
@@ -99,8 +111,8 @@ ui.get("/", async (c) => {
         <a class="btn primary" href="/sources/new">+ New source</a>
       </div>
       <ClipToolbar f={f} sources={sources.filter((x) => (x.clip_count ?? 0) > 0).map((x) => x.id)} count={clips.length} />
-      <ClipGrid clips={clips} posts={posts} metrics={metrics}
-        empty={all.length ? "No clips match these filters." : undefined} />
+      <ClipGrid clips={clips} posts={posts} metrics={metrics} channels={c.get("channels")} showChannel={scope === ""}
+        empty={scoped.length ? "No clips match these filters." : scope === "none" ? "No unassigned clips." : scope ? "No clips in this channel yet. Assign finished clips to it from their page." : undefined} />
     </Layout>,
   );
 });
@@ -109,7 +121,7 @@ ui.get("/sources", async (c) => {
   const sources = await db.listSources(c.env.DB);
   const { jobs } = await syncBatch(c.env, sources); // also marks jobs that died silently as failed
   return c.html(
-    <Layout title="Sources" email={c.get("email")} nav="sources" refresh={sources.some((s) => ACTIVE_STAGES.has(s.stage))}>
+    <Layout title="Sources" email={c.get("email")} channels={c.get("channels")} scope={c.get("scope")} nav="sources" refresh={sources.some((s) => ACTIVE_STAGES.has(s.stage))}>
       <div class="page-head">
         <div>
           <h1>Sources</h1>
@@ -124,7 +136,7 @@ ui.get("/sources", async (c) => {
 
 // ── New source: form, chunked upload to R2, then queue the GPU job.
 ui.get("/sources/new", (c) =>
-  c.html(<Layout title="New source" email={c.get("email")} nav="new"><NewSourceForm /></Layout>),
+  c.html(<Layout title="New source" email={c.get("email")} channels={c.get("channels")} scope={c.get("scope")} nav="new"><NewSourceForm /></Layout>),
 );
 
 ui.post("/sources/new", async (c) => {
@@ -147,7 +159,7 @@ ui.post("/sources/new", async (c) => {
     errors.push("The uploaded file wasn't found; upload it again.");
   if (errors.length) {
     return c.html(
-      <Layout title="New source" email={c.get("email")} nav="new"><NewSourceForm values={input} errors={errors} /></Layout>,
+      <Layout title="New source" email={c.get("email")} channels={c.get("channels")} scope={c.get("scope")} nav="new"><NewSourceForm values={input} errors={errors} /></Layout>,
       400,
     );
   }
@@ -232,7 +244,7 @@ ui.get("/sources/:id", async (c) => {
   }
   const p = progress(source, clips, events, job);
   return c.html(
-    <Layout title={id} email={c.get("email")} nav="sources" refresh={active}>
+    <Layout title={id} email={c.get("email")} channels={c.get("channels")} scope={c.get("scope")} nav="sources" refresh={active}>
       <a class="crumb" href="/sources">← Sources</a>
       <div class="page-head">
         <div style="min-width:0">
@@ -288,19 +300,22 @@ async function renderClip(c: Context<AppEnv>, id: string, flash?: string) {
   const clip = await db.getClip(c.env.DB, id);
   if (!clip) return c.notFound();
   await advancePending(c.env, id, true).catch(() => {}); // the crons do this too; this just makes the page current
-  const [source, posts, accounts, siblings, metricsMap] = await Promise.all([
-    db.getSource(c.env.DB, clip.source_id), clipPosts(c.env.DB, id), accountNames(c.env),
+  const [source, posts, accounts, siblings, metricsMap, channel, locked] = await Promise.all([
+    db.getSource(c.env.DB, clip.source_id), clipPosts(c.env.DB, id), accountNames(c.env, clip.channel_id),
     c.env.DB.prepare("SELECT id FROM clips WHERE source_id = ? ORDER BY id").bind(clip.source_id).all<{ id: string }>(),
     allMetrics(c.env.DB, id),
+    clip.channel_id ? getChannel(c.env.DB, clip.channel_id) : Promise.resolve(null),
+    clipLocked(c.env.DB, clip),
   ]);
   const metrics = metricsMap.get(id);
+  const tags = channel?.hashtags ?? "";
   const credit = source?.credit ?? null;
   // TikTok requires showing the creator's own name and privacy options before a direct post.
   let creator: tiktok.CreatorInfo | null = null;
   let creatorError: string | undefined;
   if (accounts.tiktok) {
     try {
-      creator = await tiktok.creatorInfo(c.env);
+      creator = await tiktok.creatorInfo(c.env, clip.channel_id!);
     } catch (err) {
       creatorError = err instanceof Error ? err.message : String(err);
     }
@@ -310,26 +325,27 @@ async function renderClip(c: Context<AppEnv>, id: string, flash?: string) {
   const ids = siblings.results.map((r) => r.id);
   const at = ids.indexOf(id);
   // Open on the details while it's unreviewed, else on the first platform it isn't on yet.
-  const defaultTab = clip.review === "pending" ? "details"
+  const defaultTab = clip.review === "pending" || !clip.channel_id ? "details"
     : (["youtube", "tiktok", "instagram"] as const).find((pf) => states[pf].state === "none" || states[pf].state === "failed") ?? "details";
   return c.html(
-    <Layout title={clip.title ?? id} email={c.get("email")} nav="clips" refresh={posts.some((p) => p.status === "processing")}>
+    <Layout title={clip.title ?? id} email={c.get("email")} channels={c.get("channels")} scope={c.get("scope")} nav="clips" refresh={posts.some((p) => p.status === "processing")}>
       <ClipPage
         clip={clip}
         credit={credit}
         flash={flash}
         states={states}
         metrics={metrics}
+        channel={{ current: channel, all: c.get("channels"), locked }}
         nav={{ prev: ids[at - 1], next: ids[at + 1], index: at + 1, total: ids.length }}
         defaultTab={defaultTab}
         panels={{
-          youtube: <YouTubePanel clip={clip} channel={accounts.youtube ?? null} credit={credit} stats={metrics?.youtube} />,
+          youtube: <YouTubePanel clip={clip} channel={accounts.youtube ?? null} credit={credit} stats={metrics?.youtube} assigned={!!channel} />,
           tiktok: (
-            <TikTokPanel clip={clip} account={accounts.tiktok} caption={captionFor("tiktok", clip, credit)}
+            <TikTokPanel clip={clip} account={accounts.tiktok} caption={captionFor("tiktok", clip, credit, tags)} assigned={!!channel}
               posts={posts.filter((p) => p.platform === "tiktok")} creator={creator} creatorError={creatorError} stats={metrics?.tiktok} />
           ),
           instagram: (
-            <InstagramPanel clip={clip} account={accounts.instagram} caption={captionFor("instagram", clip, credit)}
+            <InstagramPanel clip={clip} account={accounts.instagram} caption={captionFor("instagram", clip, credit, tags)} assigned={!!channel}
               posts={posts.filter((p) => p.platform === "instagram")} stats={metrics?.instagram} />
           ),
         }}
@@ -361,18 +377,24 @@ ui.post("/clips/:id/social/:platform", async (c) => {
     await db.updateClip(c.env.DB, id, { captions: JSON.stringify(saved) });
     return back("Caption reset to auto");
   }
-  const source = await db.getSource(c.env.DB, clip.source_id);
+  const [source, channel] = await Promise.all([
+    db.getSource(c.env.DB, clip.source_id),
+    clip.channel_id ? getChannel(c.env.DB, clip.channel_id) : Promise.resolve(null),
+  ]);
   const credit = source?.credit ?? null;
+  const tags = channel?.hashtags ?? "";
   // Only store it as the user's own caption if it differs from the auto one.
-  const custom = typed && typed !== captionFor(platform, { ...clip, captions: "{}" }, credit).text;
+  const custom = typed && typed !== captionFor(platform, { ...clip, captions: "{}" }, credit, tags).text;
   if (custom) saved[platform] = typed;
   else delete saved[platform];
   await db.updateClip(c.env.DB, id, { captions: JSON.stringify(saved) });
   if (action === "save") return back("Caption saved");
   if (action !== "post") return c.text("bad action", 400);
   if (!clip.video_key) return back("This clip isn't rendered yet");
+  if (!channel) return back("Assign this clip to a channel before posting it");
+  const ch = channel.id;
 
-  const caption = withCredit(typed || captionFor(platform, clip, credit).text, credit);
+  const caption = withCredit(typed || captionFor(platform, clip, credit, tags).text, credit);
   let mode = "reel";
   let privacy: string | null = null;
   try {
@@ -381,19 +403,19 @@ ui.post("/clips/:id/social/:platform", async (c) => {
       mode = f.mode === "draft" ? "draft" : "direct";
       privacy = mode === "direct" ? String(f.privacy ?? "") : null;
       if (mode === "direct" && !privacy) return back("Choose who can view the TikTok first");
-      remoteId = await tiktok.post(c.env, clip.video_key, {
+      remoteId = await tiktok.post(c.env, ch, clip.video_key, {
         mode: mode as "direct" | "draft", caption, privacy: privacy ?? "",
         allowComments: f.allow_comments === "1", allowDuet: f.allow_duet === "1", allowStitch: f.allow_stitch === "1",
       });
     } else {
-      remoteId = await instagram.post(c.env, clip.video_key, caption, f.share_to_feed === "1");
+      remoteId = await instagram.post(c.env, ch, clip.video_key, caption, f.share_to_feed === "1");
     }
-    await insertPost(c.env.DB, { clip_id: id, platform, mode, caption, privacy, remote_id: remoteId });
+    await insertPost(c.env.DB, { clip_id: id, channel_id: ch, platform, mode, caption, privacy, remote_id: remoteId });
     return back(platform === "tiktok" ? "Uploaded to TikTok; processing" : "Sent to Instagram; processing (usually 1–3 min)");
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(JSON.stringify({ msg: "social post failed", clip: id, platform, error: msg }));
-    await insertPost(c.env.DB, { clip_id: id, platform, mode, caption, privacy, status: "failed", error: msg.slice(0, 1000) });
+    await insertPost(c.env.DB, { clip_id: id, channel_id: ch, platform, mode, caption, privacy, status: "failed", error: msg.slice(0, 1000) });
     return back(`${platform === "tiktok" ? "TikTok" : "Instagram"} post failed: ${msg.slice(0, 300)}`);
   }
 });
@@ -402,7 +424,7 @@ ui.post("/clips/:id/social/:platform", async (c) => {
 ui.get("/submissions", async (c) => {
   const [token, subs] = await Promise.all([getUploadToken(c.env.DB), listSubmissions(c.env.DB)]);
   return c.html(
-    <Layout title="Submissions" email={c.get("email")} nav="submissions">
+    <Layout title="Submissions" email={c.get("email")} channels={c.get("channels")} scope={c.get("scope")} nav="submissions">
       <SubmissionsPage link={token ? `${new URL(c.req.url).origin}/u/${token}` : null}
         turnstile={!!(c.env.TURNSTILE_SITE_KEY && c.env.TURNSTILE_SECRET_KEY)} subs={subs} flash={c.req.query("flash")} />
     </Layout>,
@@ -466,7 +488,7 @@ ui.get("/users", async (c) => {
     }
   }
   return c.html(
-    <Layout title="Users" email={c.get("email")} nav="users">
+    <Layout title="Users" email={c.get("email")} channels={c.get("channels")} scope={c.get("scope")} nav="users">
       <UsersPage me={c.get("email")} users={users} error={error} configured={configured} flash={c.req.query("flash")} />
     </Layout>,
   );
@@ -498,9 +520,12 @@ ui.post("/users/remove", async (c) => {
 
 // ── Metrics
 ui.get("/metrics", async (c) => {
-  const [clips, metrics] = await Promise.all([db.listClips(c.env.DB, {}), allMetrics(c.env.DB)]);
+  const scope = c.get("scope");
+  const [all, metrics] = await Promise.all([db.listClips(c.env.DB, {}), allMetrics(c.env.DB)]);
+  const clips = all.filter((cl) => inScope(scope, cl));
+  for (const id of [...metrics.keys()]) if (!clips.some((cl) => cl.id === id)) metrics.delete(id);
   return c.html(
-    <Layout title="Metrics" email={c.get("email")} nav="metrics">
+    <Layout title="Metrics" email={c.get("email")} channels={c.get("channels")} scope={c.get("scope")} nav="metrics">
       <MetricsPage clips={clips} metrics={metrics} flash={c.req.query("flash")} />
     </Layout>,
   );
@@ -520,12 +545,15 @@ ui.post("/clips/:id/metrics", async (c) => {
   return c.redirect(`/clips/${id}?flash=${encodeURIComponent(refreshedMsg(r))}`, 303);
 });
 
-// ── Connected accounts (OAuth). The callback is also behind Access: the browser carries the login.
-ui.get("/accounts", async (c) =>
+// ── Channels: niche brands, each with its own connected accounts. (OAuth callbacks are behind Access too.)
+ui.get("/accounts", (c) => c.redirect("/channels", 301));
+
+ui.get("/channels", async (c) =>
   c.html(
-    <Layout title="Accounts" email={c.get("email")} nav="accounts">
-      <AccountsPage
-        accounts={await accountNames(c.env)}
+    <Layout title="Channels" email={c.get("email")} channels={c.get("channels")} scope={c.get("scope")} nav="channels">
+      <ChannelsPage
+        channels={c.get("channels")}
+        accounts={await allAccountNames(c.env)}
         configured={{
           youtube: !!(c.env.YT_CLIENT_ID && c.env.YT_CLIENT_SECRET && c.env.TOKEN_ENC_KEY),
           tiktok: !!(c.env.TIKTOK_CLIENT_KEY && c.env.TIKTOK_CLIENT_SECRET && c.env.TOKEN_ENC_KEY),
@@ -537,13 +565,85 @@ ui.get("/accounts", async (c) =>
   ),
 );
 
+const channelBack = (c: Context<AppEnv>, msg: string, anchor = "") =>
+  c.redirect(`/channels?flash=${encodeURIComponent(msg)}${anchor ? `#ch-${anchor}` : ""}`, 303);
+
+ui.post("/channels", async (c) => {
+  const f = await c.req.parseBody();
+  const name = String(f.name ?? "").trim().slice(0, 60);
+  const id = slugify(String(f.id ?? "") || name).slice(0, 40);
+  if (!name) return channelBack(c, "Give the channel a name");
+  if (!CHANNEL_ID_RE.test(id)) return channelBack(c, "Channel ID: 2–41 lowercase letters, digits or -");
+  if (await getChannel(c.env.DB, id)) return channelBack(c, `A channel with ID “${id}” already exists`);
+  await saveChannel(c.env.DB, { id, name, niche: String(f.niche ?? "").trim().slice(0, 120), hashtags: String(f.hashtags ?? "") }, true);
+  return channelBack(c, `Channel “${name}” created. Connect its accounts below.`, id);
+});
+
+ui.post("/channels/:id", async (c) => {
+  const ch = await getChannel(c.env.DB, c.req.param("id"));
+  if (!ch) return c.notFound();
+  const f = await c.req.parseBody();
+  const name = String(f.name ?? "").trim().slice(0, 60) || ch.name;
+  await saveChannel(c.env.DB, { id: ch.id, name, niche: String(f.niche ?? "").trim().slice(0, 120), hashtags: String(f.hashtags ?? "") }, false);
+  return channelBack(c, `Saved “${name}”`, ch.id);
+});
+
+ui.post("/channels/:id/delete", async (c) => {
+  const ch = await getChannel(c.env.DB, c.req.param("id"));
+  if (!ch) return c.notFound();
+  const blocked = await deleteChannel(c.env.DB, ch.id);
+  if (blocked) return channelBack(c, `Can't delete “${ch.name}”: ${blocked}`, ch.id);
+  if (c.get("scope") === ch.id) setCookie(c, SCOPE_COOKIE, "", { path: "/", maxAge: 0 });
+  return channelBack(c, `Deleted “${ch.name}”; its clips are unassigned again`);
+});
+
+ui.post("/channels/:id/disconnect/:platform", async (c) => {
+  const p = c.req.param("platform");
+  const ch = await getChannel(c.env.DB, c.req.param("id"));
+  if (!isAccount(p) || !ch) return c.notFound();
+  await deleteAccount(c.env, ch.id, p);
+  return channelBack(c, `Disconnected ${p} from “${ch.name}”`, ch.id);
+});
+
+// Header switcher: remember which channel to show, then go back where you were.
+ui.post("/scope", async (c) => {
+  const f = await c.req.parseBody();
+  const v = String(f.scope ?? "");
+  setCookie(c, SCOPE_COOKIE, v === "none" || CHANNEL_ID_RE.test(v) ? v : "", { path: "/", sameSite: "Lax", secure: true, httpOnly: true, maxAge: 31536000 });
+  const to = String(f.to ?? "");
+  if (/^\/(?!\/)/.test(to)) return c.redirect(to, 303); // same-site path only
+  const ref = c.req.header("referer");
+  const back = ref && new URL(ref).origin === new URL(c.req.url).origin ? new URL(ref).pathname + new URL(ref).search : "/";
+  return c.redirect(back.startsWith("/clips/") ? "/" : back, 303);
+});
+
+// Assign a finished clip to a channel (locked once it has gone out anywhere).
+ui.post("/clips/:id/channel", async (c) => {
+  const clip = await db.getClip(c.env.DB, c.req.param("id"));
+  if (!clip) return c.notFound();
+  const back = (m: string) => c.redirect(`/clips/${clip.id}?flash=${encodeURIComponent(m)}#details`, 303);
+  if (await clipLocked(c.env.DB, clip)) return back("This clip has already gone out on its channel, so it can't be moved");
+  const v = String((await c.req.parseBody()).channel_id ?? "");
+  if (!v) {
+    await assignClip(c.env.DB, clip.id, null);
+    return back("Clip unassigned");
+  }
+  const ch = await getChannel(c.env.DB, v);
+  if (!ch) return back("That channel doesn't exist");
+  await assignClip(c.env.DB, clip.id, ch.id);
+  return back(`Assigned to ${ch.name}`);
+});
+
 const redirectUri = (c: Context<AppEnv>, p: AccountPlatform) => `${new URL(c.req.url).origin}/oauth/${p}/callback`;
 
-ui.get("/oauth/:platform/start", (c) => {
+// Connect an account to a channel: /oauth/<platform>/start?channel=<id>. The channel rides in the state cookie.
+ui.get("/oauth/:platform/start", async (c) => {
   const p = c.req.param("platform");
   if (!isAccount(p)) return c.notFound();
+  const ch = await getChannel(c.env.DB, c.req.query("channel") ?? "");
+  if (!ch) return channelBack(c, "Pick a channel to connect the account to");
   const state = crypto.randomUUID();
-  setCookie(c, `oauth_${p}`, state, { httpOnly: true, secure: true, sameSite: "Lax", path: "/oauth", maxAge: 600 });
+  setCookie(c, `oauth_${p}`, `${state}.${ch.id}`, { httpOnly: true, secure: true, sameSite: "Lax", path: "/oauth", maxAge: 600 });
   const url = AUTH[p].authorizeUrl(c.env, redirectUri(c, p), state);
   return c.redirect(url, 302);
 });
@@ -551,26 +651,21 @@ ui.get("/oauth/:platform/start", (c) => {
 ui.get("/oauth/:platform/callback", async (c) => {
   const p = c.req.param("platform");
   if (!isAccount(p)) return c.notFound();
-  const back = (msg: string) => c.redirect(`/accounts?flash=${encodeURIComponent(msg)}`, 303);
-  const expected = getCookie(c, `oauth_${p}`);
+  const [expected, chId] = (getCookie(c, `oauth_${p}`) ?? "").split(".");
   deleteCookie(c, `oauth_${p}`, { path: "/oauth" });
-  if (!expected || c.req.query("state") !== expected) return back("Login expired or was tampered with; try again");
+  const back = (msg: string) => channelBack(c, msg, chId);
+  const ch = chId ? await getChannel(c.env.DB, chId) : null;
+  if (!expected || !ch || c.req.query("state") !== expected) return back("Login expired or was tampered with; try again");
   const code = c.req.query("code");
   if (!code) return back(`${p} login cancelled: ${c.req.query("error_description") ?? c.req.query("error") ?? "no code"}`);
   try {
-    const acct = await AUTH[p].connect(c.env, code, redirectUri(c, p));
-    return back(`Connected ${p} as ${acct.accountName ?? acct.accountId}`);
+    const acct = await AUTH[p].connect(c.env, ch.id, code, redirectUri(c, p));
+    return back(`Connected ${p} for “${ch.name}” as ${acct.accountName ?? acct.accountId}`);
   } catch (err) {
     return back(`Couldn't connect: ${err instanceof Error ? err.message : String(err)}`);
   }
 });
 
-ui.post("/accounts/:platform/disconnect", async (c) => {
-  const p = c.req.param("platform");
-  if (!isAccount(p)) return c.notFound();
-  await deleteAccount(c.env, p);
-  return c.redirect("/accounts?flash=Disconnected", 303);
-});
 
 ui.get("/clips/:id", (c) => renderClip(c, c.req.param("id"), c.req.query("flash")));
 
@@ -592,11 +687,12 @@ ui.post("/clips/:id/youtube", async (c) => {
   const clip = await db.getClip(c.env.DB, id);
   if (!clip) return c.notFound();
   if (clip.youtube_id) return c.redirect(`/clips/${id}`, 303);
+  if (!clip.channel_id) return c.redirect(`/clips/${id}?flash=${encodeURIComponent("Assign this clip to a channel before uploading it")}#details`, 303);
   const form = await c.req.parseBody();
   const privacy = (["private", "unlisted", "public"] as const).find((p) => p === form.privacy) ?? "private";
   const source = await db.getSource(c.env.DB, clip.source_id);
   try {
-    const videoId = await uploadToYouTube(c.env, clip, source?.credit ?? null, privacy);
+    const videoId = await uploadToYouTube(c.env, clip.channel_id, clip, source?.credit ?? null, privacy);
     await db.updateClip(c.env.DB, id, { youtube_id: videoId, stage: "uploaded", review: "approved" });
     return c.redirect(`/clips/${id}?flash=${encodeURIComponent(`Uploaded to YouTube (${privacy})`)}#youtube`, 303);
   } catch (err) {

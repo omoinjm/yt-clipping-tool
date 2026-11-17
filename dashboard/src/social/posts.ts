@@ -7,6 +7,7 @@ export type PostRow = {
   status: "processing" | "published" | "drafted" | "failed";
   remote_id: string | null; post_id: string | null; url: string | null; caption: string | null; privacy: string | null;
   error: string | null; created_at: string; updated_at: string;
+  channel_id: string | null; // whose account it went out on
 };
 
 export async function clipPosts(db: D1Database, clipId: string): Promise<PostRow[]> {
@@ -26,14 +27,14 @@ export async function latestPosts(db: D1Database): Promise<Map<string, Partial<R
 
 export async function insertPost(
   db: D1Database,
-  p: Pick<PostRow, "clip_id" | "platform" | "mode" | "caption" | "privacy"> & Partial<Pick<PostRow, "status" | "remote_id" | "error">>,
+  p: Pick<PostRow, "clip_id" | "channel_id" | "platform" | "mode" | "caption" | "privacy"> & Partial<Pick<PostRow, "status" | "remote_id" | "error">>,
 ): Promise<number> {
   const r = await db
     .prepare(
-      `INSERT INTO posts (clip_id, platform, mode, status, remote_id, caption, privacy, error)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+      `INSERT INTO posts (clip_id, channel_id, platform, mode, status, remote_id, caption, privacy, error)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
     )
-    .bind(p.clip_id, p.platform, p.mode, p.status ?? "processing", p.remote_id ?? null, p.caption, p.privacy, p.error ?? null)
+    .bind(p.clip_id, p.channel_id, p.platform, p.mode, p.status ?? "processing", p.remote_id ?? null, p.caption, p.privacy, p.error ?? null)
     .first<{ id: number }>();
   return r!.id;
 }
@@ -50,10 +51,11 @@ async function updatePost(db: D1Database, id: number, f: Partial<Pick<PostRow, "
 const STALE_MS = 2 * 3_600_000;
 
 async function advance(env: Env, p: PostRow): Promise<void> {
-  if (!p.remote_id) return;
+  const ch = p.channel_id;
+  if (!p.remote_id || !ch) return;
   try {
     if (p.platform === "tiktok") {
-      const s = await tiktok.status(env, p.remote_id);
+      const s = await tiktok.status(env, ch, p.remote_id);
       // A draft the creator discarded reports FAILED; keep it as a draft rather than flagging an error.
       if (s.status === "FAILED" && p.status === "drafted") return;
       if (s.status === "FAILED") return updatePost(env.DB, p.id, { status: "failed", error: `TikTok: ${s.fail_reason ?? "failed"}` });
@@ -61,7 +63,7 @@ async function advance(env: Env, p: PostRow): Promise<void> {
       if (s.status === "PUBLISH_COMPLETE")
         return updatePost(env.DB, p.id, { status: "published", post_id: s.postId ?? null, url: s.url ?? null });
     } else {
-      const r = await instagram.advance(env, p.remote_id);
+      const r = await instagram.advance(env, ch, p.remote_id);
       if (r && r.ok) return updatePost(env.DB, p.id, { status: "published", post_id: r.postId, url: r.url });
       if (r && !r.ok) return updatePost(env.DB, p.id, { status: "failed", error: r.error });
     }

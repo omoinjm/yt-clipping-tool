@@ -2,11 +2,8 @@ import type { ClipRow } from "../db";
 import { CAPTION_MAX } from "../social/captions";
 import type { PostRow } from "../social/posts";
 import type { CreatorInfo } from "../social/tiktok";
-import type { AccountPlatform } from "../social/tokens";
 import { buildDescription } from "../youtube";
-import { PF } from "./Clips";
 import { ago, Flash, Pill } from "./Layout";
-import { Logo } from "./Logos";
 import type { MetricRow } from "../social/metrics";
 import { StatLine } from "./Metrics";
 
@@ -34,56 +31,6 @@ const PRIVACY_LABEL: Record<string, string> = {
 };
 
 type Caption = { text: string; custom: boolean };
-
-export function AccountsPage(props: {
-  accounts: Partial<Record<AccountPlatform, string>>;
-  configured: Record<AccountPlatform, boolean>;
-  flash?: string;
-}) {
-  const HELP: Record<AccountPlatform, string> = {
-    youtube: "Shorts uploads. For a brand channel, pick it on Google's account chooser.",
-    tiktok: "Send to drafts, or post directly (private until TikTok audits the app).",
-    instagram: "Reels on a Business or Creator account in your Meta business portfolio.",
-  };
-  return (
-    <>
-      <div class="page-head">
-        <div>
-          <h1>Accounts</h1>
-          <p class="sub" style="margin:4px 0 0">Where clips get published. Logins are stored encrypted.</p>
-        </div>
-      </div>
-      <Flash msg={props.flash} />
-      <div class="src-list">
-        {(["youtube", "tiktok", "instagram"] as const).map((p) => (
-          <div class="panel row" style="justify-content:space-between;gap:16px">
-            <div class="row" style="gap:12px;flex-wrap:nowrap;min-width:0">
-              <span class={`pf lg ${props.accounts[p] ? "live" : "none"}`}><Logo pf={p} size={22} /></span>
-              <div style="min-width:0">
-                <b>{PF[p].name}</b>
-                <div class="muted small">{HELP[p]}</div>
-              </div>
-            </div>
-            <div class="row" style="gap:12px">
-              {props.accounts[p] ? <Pill v="published" label={props.accounts[p]!} /> : <Pill v="none" label="Not connected" />}
-              {!props.configured[p] ? (
-                <span class="muted small">App keys not set on the Worker</span>
-              ) : props.accounts[p] ? (
-                <form method="post" action={`/accounts/${p}/disconnect`} class="row">
-                  <a class="btn sm" href={`/oauth/${p}/start`}>Reconnect</a>
-                  <button class="sm danger ghost" type="submit" data-confirm-title={`Disconnect ${PF[p].name}?`} data-confirm-ok="Disconnect"
-                    data-confirm={`Clipper will stop posting to ${props.accounts[p]} and forget its login. You can connect again any time.`}>Disconnect</button>
-                </form>
-              ) : (
-                <a class="btn primary sm" href={`/oauth/${p}/start`}>Connect {PF[p].name}</a>
-              )}
-            </div>
-          </div>
-        ))}
-      </div>
-    </>
-  );
-}
 
 function PostHistory(props: { posts: PostRow[] }) {
   if (props.posts.length === 0) return null;
@@ -130,10 +77,13 @@ const CaptionButtons = (props: { custom: boolean }) => (
 );
 
 const NotConnected = (p: { name: string }) => (
-  <div class="empty">{p.name} isn't connected. <a href="/accounts">Connect it on Accounts</a>.</div>
+  <div class="empty">This clip's channel has no {p.name} account connected. <a href="/channels">Connect one on Channels</a>.</div>
+);
+const NeedsChannel = () => (
+  <div class="empty">Assign this clip to a channel first (Details tab). It will post with that channel's accounts.</div>
 );
 
-export function YouTubePanel(props: { clip: ClipRow; channel: string | null; credit: string | null; stats?: MetricRow }) {
+export function YouTubePanel(props: { clip: ClipRow; channel: string | null; credit: string | null; stats?: MetricRow; assigned: boolean }) {
   const c = props.clip;
   if (c.youtube_id)
     return (
@@ -147,6 +97,7 @@ export function YouTubePanel(props: { clip: ClipRow; channel: string | null; cre
         </div>
       </div>
     );
+  if (!props.assigned) return <NeedsChannel />;
   if (!props.channel) return <NotConnected name="YouTube" />;
   const tags: string[] = JSON.parse(c.tags || "[]");
   return (
@@ -177,12 +128,20 @@ export function TikTokPanel(props: {
   creator: CreatorInfo | null;
   creatorError?: string;
   stats?: MetricRow;
+  assigned: boolean;
 }) {
   const c = props.clip;
-  if (!props.account) return <NotConnected name="TikTok" />;
+
   const busy = props.posts.some((x) => x.status === "processing");
   const published = props.posts.find((x) => x.status === "published");
   const draft = props.posts.find((x) => x.status === "drafted");
+  if (!published && !draft && (!props.assigned || !props.account))
+    return (
+      <>
+        {!props.assigned ? <NeedsChannel /> : <NotConnected name="TikTok" />}
+        <PostHistory posts={props.posts} />
+      </>
+    );
   if (published)
     return (
       <>
@@ -248,11 +207,18 @@ export function TikTokPanel(props: {
   );
 }
 
-export function InstagramPanel(props: { clip: ClipRow; account?: string; caption: Caption; posts: PostRow[]; stats?: MetricRow }) {
+export function InstagramPanel(props: { clip: ClipRow; account?: string; caption: Caption; posts: PostRow[]; stats?: MetricRow; assigned: boolean }) {
   const c = props.clip;
-  if (!props.account) return <NotConnected name="Instagram" />;
+
   const busy = props.posts.some((x) => x.status === "processing");
   const published = props.posts.find((x) => x.status === "published");
+  if (!published && (!props.assigned || !props.account))
+    return (
+      <>
+        {!props.assigned ? <NeedsChannel /> : <NotConnected name="Instagram" />}
+        <PostHistory posts={props.posts} />
+      </>
+    );
   if (published)
     return (
       <>
