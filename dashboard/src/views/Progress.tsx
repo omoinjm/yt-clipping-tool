@@ -1,75 +1,67 @@
-import { raw } from "hono/html";
 import type { BatchJob, LogLine } from "../aws";
 import { fmtDuration, type Progress } from "../progress";
-
-const MARK = { done: "✓", active: "●", todo: "○", failed: "✗" } as const;
 
 export function ProgressPanel(props: { p: Progress; active: boolean; job: BatchJob | null; batchError?: string }) {
   const { p } = props;
   const finishAt = p.eta != null ? new Date(Date.now() + p.eta * 1000).toISOString().slice(11, 16) : null;
   return (
     <section class="panel">
-      <div class="row" style="justify-content:space-between">
-        <div class="row">
-          <span class="muted">{props.active ? "Elapsed" : "Took"}</span> <b>{fmtDuration(p.elapsed)}</b>
-          {props.active ? (
-            <>
-              <span class="muted">· ETA</span>
-              <b>{p.eta != null ? `~${fmtDuration(p.eta)}` : "after download"}</b>
-              {finishAt ? <span class="muted">(≈ {finishAt} UTC)</span> : null}
-            </>
-          ) : null}
-        </div>
+      <div class="kpis">
+        <div><small>{props.active ? "Elapsed" : "Took"}</small><strong>{fmtDuration(p.elapsed)}</strong></div>
+        {props.active ? (
+          <div>
+            <small>ETA</small>
+            <strong>{p.eta != null ? `~${fmtDuration(p.eta)}` : "after download"}</strong>
+            {finishAt ? <span class="muted small">done ≈ {finishAt} UTC</span> : null}
+          </div>
+        ) : null}
+        {p.clipsTotal ? <div><small>Clips</small><strong>{p.clipsDone}/{p.clipsTotal}</strong></div> : null}
         {props.job ? (
-          <span class="muted" style="font-size:12px">
-            Batch {props.job.status}
-            {props.job.attempts && props.job.attempts.length > 1 ? ` · attempt ${props.job.attempts.length}` : ""}
-          </span>
+          <div class="right" style="text-align:right">
+            <small>AWS Batch</small>
+            <strong style="font-size:14px;font-weight:600">{props.job.status.toLowerCase()}</strong>
+            {props.job.attempts && props.job.attempts.length > 1 ? <span class="muted small">attempt {props.job.attempts.length}</span> : null}
+          </div>
         ) : null}
       </div>
-      {props.active && p.note ? <p style="margin:10px 0 0">{p.note}</p> : null}
-      {props.active && p.eta == null ? (
-        <p class="muted" style="margin:6px 0 0;font-size:13px">The ETA appears once the video is downloaded and its length is known.</p>
-      ) : null}
-      <ol class="steps">
+      {props.active && p.note ? <p style="margin:14px 0 0"><span class="pill warn">now</span> {p.note}</p> : null}
+      <ol class="stepper">
         {p.steps.map((s) => (
           <li class={s.state}>
-            <span class="mark">{MARK[s.state]}</span>
-            {s.label}
-            {s.label.startsWith("Render") && p.clipsTotal ? <span class="muted"> {p.clipsDone}/{p.clipsTotal}</span> : null}
-            {s.took != null ? <span class="muted"> · {fmtDuration(s.took)}</span> : null}
+            <b>{s.label}</b>
+            {s.took != null ? fmtDuration(s.took) : s.state === "active" ? "in progress" : s.state === "failed" ? "failed" : ""}
+            {s.label.startsWith("Render") && p.clipsTotal && s.state === "active" ? ` · ${p.clipsDone}/${p.clipsTotal}` : ""}
           </li>
         ))}
       </ol>
-      {props.batchError ? <p class="muted" style="font-size:12px">Couldn't read AWS Batch status: {props.batchError}</p> : null}
+      {props.active && p.eta == null ? <p class="muted small" style="margin:12px 0 0">The ETA appears once the video is downloaded and its length is known.</p> : null}
+      {props.batchError ? <p class="muted small" style="margin:12px 0 0">Couldn't read AWS Batch status: {props.batchError}</p> : null}
     </section>
   );
 }
 
 export function LogPanel(props: { lines: LogLine[] | null; error?: string; stream?: string }) {
   if (props.error) return <p class="muted">Couldn't load logs: {props.error}</p>;
-  if (!props.lines) return <p class="muted">No logs yet: the job hasn't started on a GPU machine.</p>;
-  if (props.lines.length === 0) return <p class="muted">The log stream is empty so far.</p>;
+  if (!props.lines) return <p class="muted" style="margin:0">No logs yet: the job hasn't started on a GPU machine.</p>;
+  if (props.lines.length === 0) return <p class="muted" style="margin:0">The log stream is empty so far.</p>;
   return (
     <>
-      <pre class="logs" id="logs">
+      <pre class="logs">
         {props.lines.map((l) => `${new Date(l.timestamp).toISOString().slice(11, 19)}  ${l.message}`).join("\n")}
       </pre>
-      <p class="muted" style="font-size:12px">Last {props.lines.length} lines · CloudWatch /clipper/jobs · {props.stream}</p>
-      {/* Keep the newest lines in view across the 15 s auto-refresh. */}
-      {raw(`<script>const l=document.getElementById("logs");if(l)l.scrollTop=l.scrollHeight</script>`)}
+      <p class="muted small" style="margin:8px 0 0">Last {props.lines.length} lines · CloudWatch /clipper/jobs · {props.stream}</p>
     </>
   );
 }
 
 export function RetryForm(props: { id: string; clips: number }) {
   return (
-    <form method="post" action={`/sources/${props.id}/retry`} class="row" style="margin:10px 0">
-      <label style="flex-direction:row;align-items:center">
-        Clips <input type="number" name="clips" min="1" max="10" value={String(props.clips)} style="width:70px" />
+    <form method="post" action={`/sources/${props.id}/retry`} class="row" style="margin:12px 0">
+      <label class="check">
+        Clips <input type="number" name="clips" min="1" max="10" value={String(props.clips)} style="width:72px" />
       </label>
       <button class="primary" type="submit">Retry on GPU</button>
-      <span class="muted" style="font-size:13px">Resumes from the last checkpoint in S3.</span>
+      <span class="muted small">Resumes from the last checkpoint in S3.</span>
     </form>
   );
 }

@@ -1,10 +1,10 @@
 import { Hono, type Context } from "hono";
 import { requireAccess, requireToken, type AppEnv } from "./auth";
 import * as db from "./db";
-import { ClipDetail, ClipGrid } from "./views/Clips";
+import { ClipGrid, ClipPage, ClipToolbar, platformStates, type ClipFilter } from "./views/Clips";
 import { ACTIVE_STAGES, Layout, Pill } from "./views/Layout";
 import { NewSourceForm } from "./views/NewSource";
-import { SourceTable } from "./views/Sources";
+import { SourceList } from "./views/Sources";
 import { sourceKeyFor, validate, type NewSource, type Permission } from "./sources";
 import { describeJobs, logTail, submitBatchJob, type LogLine } from "./aws";
 import { progress, syncBatch } from "./progress";
@@ -17,7 +17,7 @@ import * as instagram from "./social/instagram";
 import { advancePending, clipPosts, insertPost, latestPosts } from "./social/posts";
 import * as tiktok from "./social/tiktok";
 import { accountNames, deleteAccount, type AccountPlatform, type Platform } from "./social/tokens";
-import { AccountsPage, SocialSection } from "./views/Social";
+import { AccountsPage, InstagramPanel, TikTokPanel, YouTubePanel } from "./views/Social";
 
 const app = new Hono<AppEnv>();
 
@@ -64,18 +64,32 @@ const ui = new Hono<AppEnv>();
 ui.use("*", requireAccess);
 
 ui.get("/", async (c) => {
-  const review = c.req.query("review");
-  const [clips, posts] = await Promise.all([db.listClips(c.env.DB, { review: review || undefined }), latestPosts(c.env.DB)]);
-  const filter = (v: string, label: string) => (
-    <a class={`btn ${(review ?? "") === v ? "on" : ""}`} href={v ? `/?review=${v}` : "/"}>{label}</a>
-  );
+  const f: ClipFilter = {
+    review: ["pending", "approved", "rejected"].includes(c.req.query("review") ?? "") ? c.req.query("review")! : "",
+    notOn: ["youtube", "tiktok", "instagram"].includes(c.req.query("notOn") ?? "") ? c.req.query("notOn")! : "",
+    source: c.req.query("source") ?? "",
+    sort: c.req.query("sort") === "score" ? "score" : "",
+  };
+  const [all, posts, sources] = await Promise.all([
+    db.listClips(c.env.DB, { review: f.review || undefined, source: f.source || undefined }),
+    latestPosts(c.env.DB),
+    db.listSources(c.env.DB),
+  ]);
+  let clips = f.notOn ? all.filter((cl) => platformStates(cl, posts.get(cl.id))[f.notOn as "youtube"].state !== "live" &&
+    platformStates(cl, posts.get(cl.id))[f.notOn as "youtube"].state !== "drafted") : all;
+  if (f.sort === "score") clips = [...clips].sort((x, y) => (y.score ?? 0) - (x.score ?? 0));
   return c.html(
-    <Layout title="Clips" email={c.get("email")}>
-      <h1>Clips</h1>
-      <div class="filters">
-        {filter("", "All")}{filter("pending", "To review")}{filter("approved", "Approved")}{filter("rejected", "Rejected")}
+    <Layout title="Clips" email={c.get("email")} nav="clips">
+      <div class="page-head">
+        <div>
+          <h1>Clips</h1>
+          <p class="sub" style="margin:4px 0 0">Review, edit and publish. Hover a card to preview it.</p>
+        </div>
+        <a class="btn primary" href="/sources/new">+ New source</a>
       </div>
-      <ClipGrid clips={clips} posts={posts} />
+      <ClipToolbar f={f} sources={sources.filter((x) => (x.clip_count ?? 0) > 0).map((x) => x.id)} count={clips.length} />
+      <ClipGrid clips={clips} posts={posts}
+        empty={all.length ? "No clips match these filters." : undefined} />
     </Layout>,
   );
 });
@@ -84,16 +98,22 @@ ui.get("/sources", async (c) => {
   const sources = await db.listSources(c.env.DB);
   const { jobs } = await syncBatch(c.env, sources); // also marks jobs that died silently as failed
   return c.html(
-    <Layout title="Sources" email={c.get("email")} refresh={sources.some((s) => ACTIVE_STAGES.has(s.stage))}>
-      <h1 class="row" style="justify-content:space-between">Sources <a class="btn primary" href="/sources/new" style="background:var(--accent);color:#111">+ New source</a></h1>
-      <SourceTable sources={sources} jobs={jobs} />
+    <Layout title="Sources" email={c.get("email")} nav="sources" refresh={sources.some((s) => ACTIVE_STAGES.has(s.stage))}>
+      <div class="page-head">
+        <div>
+          <h1>Sources</h1>
+          <p class="sub" style="margin:4px 0 0">Long videos being turned into clips.</p>
+        </div>
+        <a class="btn primary" href="/sources/new">+ New source</a>
+      </div>
+      <SourceList sources={sources} jobs={jobs} />
     </Layout>,
   );
 });
 
 // ── New source: form, chunked upload to R2, then queue the GPU job.
 ui.get("/sources/new", (c) =>
-  c.html(<Layout title="New source" email={c.get("email")}><NewSourceForm /></Layout>),
+  c.html(<Layout title="New source" email={c.get("email")} nav="new"><NewSourceForm /></Layout>),
 );
 
 ui.post("/sources/new", async (c) => {
@@ -116,7 +136,7 @@ ui.post("/sources/new", async (c) => {
     errors.push("The uploaded file wasn't found; upload it again.");
   if (errors.length) {
     return c.html(
-      <Layout title="New source" email={c.get("email")}><NewSourceForm values={input} errors={errors} /></Layout>,
+      <Layout title="New source" email={c.get("email")} nav="new"><NewSourceForm values={input} errors={errors} /></Layout>,
       400,
     );
   }
@@ -201,27 +221,38 @@ ui.get("/sources/:id", async (c) => {
   }
   const p = progress(source, clips, events, job);
   return c.html(
-    <Layout title={id} email={c.get("email")} refresh={active}>
-      <p class="muted"><a href="/sources">← Sources</a></p>
-      <h1 class="row">{id} <Pill v={source.stage} /></h1>
-      <p class="muted">
-        {source.owner} · {source.permission}{source.credit ? ` · credit ${source.credit}` : ""}
-        {source.duration ? ` · ${Math.round(source.duration / 60)} min` : ""}
-        {source.batch_job_id ? ` · Batch job ${source.batch_job_id}` : ""}
-      </p>
+    <Layout title={id} email={c.get("email")} nav="sources" refresh={active}>
+      <a class="crumb" href="/sources">← Sources</a>
+      <div class="page-head">
+        <div style="min-width:0">
+          <h1 class="row" style="gap:10px">{id} <Pill v={source.stage} /></h1>
+          <p class="sub" style="margin:4px 0 0">
+            {source.owner} · {source.permission === "cc_by" ? "CC BY" : source.permission === "granted" ? "permission granted" : "own"}
+            {source.credit ? ` · credit “${source.credit}”` : ""}
+            {source.duration ? ` · ${Math.round(source.duration / 60)} min` : ""}
+          </p>
+        </div>
+        {/^https?:/.test(source.origin) ? <a class="btn sm" href={source.origin} target="_blank" rel="noopener">Original ↗</a> : null}
+      </div>
       <ProgressPanel p={p} active={active} job={job} batchError={batchError} />
-      {source.error ? <div class="err">{source.error}</div> : null}
+      {source.error ? <div class="err" style="margin-top:12px">{source.error}</div> : null}
       {source.stage === "failed" || source.stage === "partial" ? <RetryForm id={id} clips={clips.length || 5} /> : null}
-      <h2>Clips</h2>
-      <ClipGrid clips={clips} posts={posts} />
-      <h2>Activity</h2>
-      <table>
-        <tbody>
-          {events.map((e) => (<tr><td class="muted" style="width:190px">{e.created_at}</td><td>{e.message}</td></tr>))}
-        </tbody>
-      </table>
-      <h2>Logs</h2>
-      <LogPanel lines={lines} error={logError} stream={stream} />
+      <h2>Clips <span class="muted" style="font-weight:400">{clips.length}</span></h2>
+      <ClipGrid clips={clips} posts={posts} empty={active ? "Clips appear here as they finish rendering." : "No clips were produced."} />
+      <details class="fold" open={active || source.stage === "failed" ? true : undefined}>
+        <summary>Logs {active ? <span class="pill warn">live</span> : null}</summary>
+        <div class="body"><LogPanel lines={lines} error={logError} stream={stream} /></div>
+      </details>
+      <details class="fold">
+        <summary>Activity <span class="muted" style="font-weight:400">{events.length}</span></summary>
+        <div class="body">
+          <table>
+            <tbody>
+              {events.map((e) => (<tr><td class="muted" style="width:180px;white-space:nowrap">{e.created_at}</td><td>{e.message}</td></tr>))}
+            </tbody>
+          </table>
+        </div>
+      </details>
     </Layout>,
   );
 });
@@ -246,8 +277,9 @@ async function renderClip(c: Context<AppEnv>, id: string, flash?: string) {
   const clip = await db.getClip(c.env.DB, id);
   if (!clip) return c.notFound();
   await advancePending(c.env, id).catch(() => {}); // the cron does this too; this just makes the page current
-  const [source, posts, accounts] = await Promise.all([
+  const [source, posts, accounts, siblings] = await Promise.all([
     db.getSource(c.env.DB, clip.source_id), clipPosts(c.env.DB, id), accountNames(c.env),
+    c.env.DB.prepare("SELECT id FROM clips WHERE source_id = ? ORDER BY id").bind(clip.source_id).all<{ id: string }>(),
   ]);
   const credit = source?.credit ?? null;
   // TikTok requires showing the creator's own name and privacy options before a direct post.
@@ -260,18 +292,33 @@ async function renderClip(c: Context<AppEnv>, id: string, flash?: string) {
       creatorError = err instanceof Error ? err.message : String(err);
     }
   }
-  const captions = { tiktok: captionFor("tiktok", clip, credit), instagram: captionFor("instagram", clip, credit) };
+  const latest = { tiktok: posts.find((p) => p.platform === "tiktok"), instagram: posts.find((p) => p.platform === "instagram") };
+  const states = platformStates(clip, latest);
+  const ids = siblings.results.map((r) => r.id);
+  const at = ids.indexOf(id);
+  // Open on the details while it's unreviewed, else on the first platform it isn't on yet.
+  const defaultTab = clip.review === "pending" ? "details"
+    : (["youtube", "tiktok", "instagram"] as const).find((pf) => states[pf].state === "none") ?? "details";
   return c.html(
-    <Layout title={clip.title ?? id} email={c.get("email")} refresh={posts.some((p) => p.status === "processing")}>
-      <ClipDetail
+    <Layout title={clip.title ?? id} email={c.get("email")} nav="clips" refresh={posts.some((p) => p.status === "processing")}>
+      <ClipPage
         clip={clip}
         credit={credit}
-        youtubeChannel={accounts.youtube ?? null}
         flash={flash}
-        social={
-          <SocialSection clip={clip} accounts={accounts} captions={captions} posts={posts} creator={creator}
-            creatorError={creatorError} credit={credit} />
-        }
+        states={states}
+        nav={{ prev: ids[at - 1], next: ids[at + 1], index: at + 1, total: ids.length }}
+        defaultTab={defaultTab}
+        panels={{
+          youtube: <YouTubePanel clip={clip} channel={accounts.youtube ?? null} credit={credit} />,
+          tiktok: (
+            <TikTokPanel clip={clip} account={accounts.tiktok} caption={captionFor("tiktok", clip, credit)}
+              posts={posts.filter((p) => p.platform === "tiktok")} creator={creator} creatorError={creatorError} />
+          ),
+          instagram: (
+            <InstagramPanel clip={clip} account={accounts.instagram} caption={captionFor("instagram", clip, credit)}
+              posts={posts.filter((p) => p.platform === "instagram")} />
+          ),
+        }}
       />
     </Layout>,
   );
@@ -293,7 +340,7 @@ ui.post("/clips/:id/social/:platform", async (c) => {
   const action = String(f.action ?? "");
   const typed = String(f.caption ?? "").replace(/\r\n/g, "\n").trim().slice(0, CAPTION_MAX);
   const saved = savedCaptions(clip);
-  const back = (msg: string) => c.redirect(`/clips/${id}?flash=${encodeURIComponent(msg)}`, 303);
+  const back = (msg: string) => c.redirect(`/clips/${id}?flash=${encodeURIComponent(msg)}#${platform}`, 303);
 
   if (action === "reset") {
     delete saved[platform];
@@ -340,7 +387,7 @@ ui.post("/clips/:id/social/:platform", async (c) => {
 // ── Connected accounts (OAuth). The callback is also behind Access: the browser carries the login.
 ui.get("/accounts", async (c) =>
   c.html(
-    <Layout title="Accounts" email={c.get("email")}>
+    <Layout title="Accounts" email={c.get("email")} nav="accounts">
       <AccountsPage
         accounts={await accountNames(c.env)}
         configured={{
@@ -401,7 +448,7 @@ ui.post("/clips/:id", async (c) => {
     tags: String(form.tags ?? "").split(",").map((t) => t.trim()).filter(Boolean),
     review: ["pending", "approved", "rejected"].includes(review) ? review : "pending",
   });
-  return c.redirect(`/clips/${id}?flash=Saved`, 303);
+  return c.redirect(`/clips/${id}?flash=Saved#details`, 303);
 });
 
 ui.post("/clips/:id/youtube", async (c) => {
@@ -415,7 +462,7 @@ ui.post("/clips/:id/youtube", async (c) => {
   try {
     const videoId = await uploadToYouTube(c.env, clip, source?.credit ?? null, privacy);
     await db.updateClip(c.env.DB, id, { youtube_id: videoId, stage: "uploaded", review: "approved" });
-    return c.redirect(`/clips/${id}?flash=${encodeURIComponent(`Uploaded to YouTube (${privacy})`)}`, 303);
+    return c.redirect(`/clips/${id}?flash=${encodeURIComponent(`Uploaded to YouTube (${privacy})`)}#youtube`, 303);
   } catch (err) {
     console.error(JSON.stringify({ msg: "youtube upload failed", clip: id, error: String(err) }));
     return renderClip(c, id, `YouTube upload failed: ${err instanceof Error ? err.message : String(err)}`);

@@ -1,31 +1,42 @@
 import type { BatchJob } from "../aws";
 import type { SourceRow } from "../db";
-import { Pill } from "./Layout";
+import { ACTIVE_STAGES } from "../progress";
+import { ago, Pill } from "./Layout";
 
-export function SourceTable(props: { sources: SourceRow[]; jobs?: Map<string, BatchJob> }) {
-  if (props.sources.length === 0) return <p class="muted">No sources yet. Run <code>clipper submit &lt;id&gt;</code>.</p>;
+/** Rough progress for the list view (the source page has the real timeline). */
+const STAGE_PCT: Record<string, number> = {
+  queued: 4, running: 12, ingested: 30, transcribed: 50, scenes: 58, selected: 66, producing: 75, done: 100, partial: 100,
+};
+const PERMISSION: Record<string, string> = { own: "own", granted: "permission", cc_by: "CC BY" };
+
+export function SourceList(props: { sources: SourceRow[]; jobs?: Map<string, BatchJob> }) {
+  if (props.sources.length === 0)
+    return <div class="empty">No sources yet. <a href="/sources/new">Add your first video</a>.</div>;
   return (
-    <table>
-      <thead>
-        <tr><th>Source</th><th>Status</th><th>Clips</th><th>Length</th><th>Owner</th><th>Updated (UTC)</th></tr>
-      </thead>
-      <tbody>
-        {props.sources.map((s) => (
-          <tr>
-            <td><a href={`/sources/${s.id}`}>{s.id}</a></td>
-            <td>
-              <Pill v={s.stage} />
-              {/* While queued, the Batch status says whether it's waiting for a GPU (RUNNABLE) or starting. */}
-              {s.stage === "queued" && s.batch_job_id && props.jobs?.get(s.batch_job_id)
-                ? <span class="muted" style="font-size:12px"> {props.jobs.get(s.batch_job_id)!.status}</span> : null}
-            </td>
-            <td>{s.clip_count ?? 0}</td>
-            <td>{s.duration ? `${Math.round(s.duration / 60)} min` : "—"}</td>
-            <td>{s.owner} <span class="muted">({s.permission})</span></td>
-            <td class="muted">{s.updated_at}</td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
+    <div class="src-list">
+      {props.sources.map((s) => {
+        const active = ACTIVE_STAGES.has(s.stage);
+        const job = s.batch_job_id ? props.jobs?.get(s.batch_job_id) : undefined;
+        const pct = STAGE_PCT[s.stage] ?? 0;
+        return (
+          <a class="src" href={`/sources/${s.id}`}>
+            <div style="min-width:0">
+              <div class="name">{s.id}</div>
+              <div class="muted small">{s.owner} · {PERMISSION[s.permission] ?? s.permission}</div>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:6px">
+              <span class="row"><Pill v={s.stage} />{s.stage === "queued" && job ? <span class="muted small">{job.status.toLowerCase()}</span> : null}</span>
+              {active ? (
+                <div class="bar"><i style={`width:${pct}%`} /></div>
+              ) : null}
+            </div>
+            <div class="k"><b>{s.clip_count ?? 0}</b>clips</div>
+            <div class="k"><b>{s.posted_count ?? 0}</b>posted</div>
+            <div class="k"><b>{s.duration ? `${Math.round(s.duration / 60)}m` : "—"}</b>length</div>
+            <div class="k" style="text-align:right"><b style="font-weight:500;font-size:13px">{ago(s.updated_at)}</b>updated</div>
+          </a>
+        );
+      })}
+    </div>
   );
 }

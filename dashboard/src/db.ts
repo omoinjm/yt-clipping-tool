@@ -1,7 +1,7 @@
 export type SourceRow = {
   id: string; origin: string; owner: string; permission: string; proof: string | null; credit: string | null;
   duration: number | null; stage: string; error: string | null; batch_job_id: string | null;
-  created_at: string; updated_at: string; clip_count?: number;
+  created_at: string; updated_at: string; clip_count?: number; posted_count?: number;
 };
 
 export type ClipRow = {
@@ -35,7 +35,9 @@ export function pick(body: Record<string, unknown>, cols: string[]): Record<stri
 export async function listSources(db: D1Database): Promise<SourceRow[]> {
   const { results } = await db
     .prepare(
-      `SELECT s.*, (SELECT COUNT(*) FROM clips c WHERE c.source_id = s.id) AS clip_count
+      `SELECT s.*, (SELECT COUNT(*) FROM clips c WHERE c.source_id = s.id) AS clip_count,
+         (SELECT COUNT(*) FROM clips c WHERE c.source_id = s.id AND (c.youtube_id IS NOT NULL OR EXISTS
+           (SELECT 1 FROM posts p WHERE p.clip_id = c.id AND p.status IN ('published', 'drafted')))) AS posted_count
        FROM sources s ORDER BY s.updated_at DESC LIMIT 200`,
     )
     .all<SourceRow>();

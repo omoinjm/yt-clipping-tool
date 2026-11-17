@@ -2,96 +2,210 @@ import type { Child } from "hono/jsx";
 import type { ClipRow } from "../db";
 import type { PostRow } from "../social/posts";
 import type { Platform } from "../social/tokens";
-import { Pill } from "./Layout";
+import { Flash, Pill } from "./Layout";
 
-export function ClipGrid(props: { clips: ClipRow[]; posts?: Map<string, Partial<Record<Platform, PostRow>>> }) {
-  const live = (c: ClipRow, p: Platform) => ["published", "drafted"].includes(props.posts?.get(c.id)?.[p]?.status ?? "");
-  if (props.clips.length === 0) return <p class="muted">No clips yet. Submit a source with <code>clipper submit &lt;id&gt;</code>.</p>;
+export type AnyPlatform = "youtube" | Platform;
+export type PState = { state: "live" | "drafted" | "processing" | "failed" | "none"; label: string; url?: string };
+export type LatestPosts = Map<string, Partial<Record<Platform, PostRow>>>;
+
+export const PF: Record<AnyPlatform, { short: string; name: string; cls: string }> = {
+  youtube: { short: "YT", name: "YouTube", cls: "yt" },
+  tiktok: { short: "TT", name: "TikTok", cls: "tt" },
+  instagram: { short: "IG", name: "Instagram", cls: "ig" },
+};
+
+const POST_STATE: Record<PostRow["status"], PState["state"]> = {
+  published: "live", drafted: "drafted", processing: "processing", failed: "failed",
+};
+const STATE_LABEL: Record<PState["state"], string> = {
+  live: "Published", drafted: "In drafts", processing: "Posting…", failed: "Failed", none: "Not posted",
+};
+
+/** Where a clip stands on each platform (YouTube from the clip row, others from their latest post). */
+export function platformStates(clip: ClipRow, latest?: Partial<Record<Platform, PostRow>>): Record<AnyPlatform, PState> {
+  const fromPost = (p?: PostRow): PState => {
+    if (!p) return { state: "none", label: STATE_LABEL.none };
+    const state = POST_STATE[p.status];
+    return { state, label: STATE_LABEL[state], url: p.url ?? undefined };
+  };
+  return {
+    youtube: clip.youtube_id
+      ? { state: "live", label: "Uploaded", url: `https://youtube.com/shorts/${clip.youtube_id}` }
+      : { state: "none", label: STATE_LABEL.none },
+    tiktok: fromPost(latest?.tiktok),
+    instagram: fromPost(latest?.instagram),
+  };
+}
+
+export const PfMark = (p: { pf: AnyPlatform; s: PState }) => (
+  <span class={`pf ${PF[p.pf].cls} ${p.s.state}`} title={`${PF[p.pf].name}: ${p.s.label}`}>{PF[p.pf].short}</span>
+);
+
+export function ClipGrid(props: { clips: ClipRow[]; posts?: LatestPosts; empty?: Child }) {
+  if (props.clips.length === 0)
+    return <div class="empty">{props.empty ?? <>No clips yet. <a href="/sources/new">Add a source</a> to get some.</>}</div>;
   return (
     <div class="grid">
-      {props.clips.map((c) => (
-        <a class="card" href={`/clips/${c.id}`}>
-          {c.thumb_key ? <img loading="lazy" src={`/media/${c.thumb_key}`} alt="" /> : <div class="ph">{c.stage}</div>}
-          <div class="meta">
-            <span class="t">{c.title ?? c.id}</span>
-            <span class="row">
-              <span class="score">{Math.round(c.score ?? 0)}</span>
-              <Pill v={c.stage} />
-              {c.review !== "pending" ? <Pill v={c.review} /> : null}
-              {c.duration ? <span class="muted">{c.duration.toFixed(0)}s</span> : null}
-            </span>
-            {c.youtube_id || live(c, "tiktok") || live(c, "instagram") ? (
-              <span class="badges">
-                {c.youtube_id ? <span>YT</span> : null}
-                {live(c, "tiktok") ? <span>TikTok</span> : null}
-                {live(c, "instagram") ? <span>IG</span> : null}
+      {props.clips.map((c) => {
+        const st = platformStates(c, props.posts?.get(c.id));
+        const odd = !["published", "uploaded", "rendered"].includes(c.stage);
+        return (
+          <a class="card" href={`/clips/${c.id}`} data-preview={c.video_key ? `/media/${c.video_key}` : undefined}>
+            <div class="thumb">
+              {c.thumb_key ? <img loading="lazy" src={`/media/${c.thumb_key}`} alt="" /> : <div class="ph">{c.stage}</div>}
+              <span class="tl ov score">{Math.round(c.score ?? 0)}</span>
+              {c.duration ? <span class="br ov">{Math.round(c.duration)}s</span> : null}
+              <span class="bl">{(["youtube", "tiktok", "instagram"] as const).map((pf) => <PfMark pf={pf} s={st[pf]} />)}</span>
+            </div>
+            <div class="meta">
+              <span class="t">{c.title ?? c.id}</span>
+              <span class="row">
+                <Pill v={c.review} />
+                {odd ? <Pill v={c.stage} /> : null}
               </span>
-            ) : null}
-          </div>
-        </a>
-      ))}
+            </div>
+          </a>
+        );
+      })}
     </div>
   );
 }
 
-export function ClipDetail(props: { clip: ClipRow; credit: string | null; flash?: string; social?: Child; youtubeChannel?: string | null }) {
+export type ClipFilter = { review: string; notOn: string; source: string; sort: string };
+
+export function ClipToolbar(props: { f: ClipFilter; sources: string[]; count: number }) {
+  const { f } = props;
+  const href = (patch: Partial<ClipFilter>) => {
+    const q = new URLSearchParams(Object.entries({ ...f, ...patch }).filter(([, v]) => v) as [string, string][]);
+    const s = q.toString();
+    return s ? `/?${s}` : "/";
+  };
+  const seg = (key: keyof ClipFilter, opts: [string, string][]) => (
+    <div class="seg">
+      {opts.map(([v, label]) => <a class={f[key] === v ? "on" : undefined} href={href({ [key]: v })}>{label}</a>)}
+    </div>
+  );
+  return (
+    <>
+      <div class="toolbar">
+        {seg("review", [["", "All"], ["pending", "To review"], ["approved", "Approved"], ["rejected", "Rejected"]])}
+        {seg("notOn", [["", "Any"], ["youtube", "Not on YouTube"], ["tiktok", "Not on TikTok"], ["instagram", "Not on Instagram"]])}
+      </div>
+      <form class="toolbar" method="get" action="/">
+        {f.review ? <input type="hidden" name="review" value={f.review} /> : null}
+        {f.notOn ? <input type="hidden" name="notOn" value={f.notOn} /> : null}
+        <select name="source" onchange="this.form.submit()" aria-label="Source">
+          <option value="">All sources</option>
+          {props.sources.map((s) => <option value={s} selected={f.source === s}>{s}</option>)}
+        </select>
+        <select name="sort" onchange="this.form.submit()" aria-label="Sort">
+          <option value="" selected={!f.sort}>Newest first</option>
+          <option value="score" selected={f.sort === "score"}>Highest score</option>
+        </select>
+        <noscript><button class="sm">Apply</button></noscript>
+        <span class="muted small right">{props.count} clip{props.count === 1 ? "" : "s"}</span>
+      </form>
+    </>
+  );
+}
+
+export function ClipPage(props: {
+  clip: ClipRow;
+  credit: string | null;
+  flash?: string;
+  states: Record<AnyPlatform, PState>;
+  nav: { prev?: string; next?: string; index: number; total: number };
+  defaultTab: string;
+  panels: { youtube: Child; tiktok: Child; instagram: Child };
+}) {
   const c = props.clip;
   const tags: string[] = JSON.parse(c.tags || "[]");
   return (
     <>
-      <p class="muted"><a href={`/sources/${c.source_id}`}>← {c.source_id}</a></p>
-      {props.flash ? <div class="flash">{props.flash}</div> : null}
+      <div class="row" style="justify-content:space-between">
+        <a class="crumb" href={`/sources/${c.source_id}`}>← {c.source_id}</a>
+        <div class="pager">
+          {props.nav.prev ? <a class="btn sm ghost" href={`/clips/${props.nav.prev}`} title="Previous clip">‹ Prev</a> : null}
+          <span class="muted small">{props.nav.index} / {props.nav.total}</span>
+          {props.nav.next ? <a class="btn sm ghost" href={`/clips/${props.nav.next}`} title="Next clip">Next ›</a> : null}
+        </div>
+      </div>
+      <Flash msg={props.flash} />
       <div class="detail">
-        <div>
+        <div class="side">
           {c.video_key ? (
-            <video controls preload="metadata" playsinline src={`/media/${c.video_key}`} poster={c.thumb_key ? `/media/${c.thumb_key}` : undefined} />
+            <video class="player" controls preload="metadata" playsinline src={`/media/${c.video_key}`} poster={c.thumb_key ? `/media/${c.thumb_key}` : undefined} />
           ) : (
-            <div class="card"><div class="ph">not rendered yet ({c.stage})</div></div>
+            <div class="card"><div class="thumb"><div class="ph">Not rendered yet ({c.stage})</div></div></div>
           )}
           <div class="row" style="margin-top:10px">
-            {c.video_key ? <a class="btn" href={`/media/${c.video_key}?download=1`}>Download</a> : null}
-            {c.youtube_id ? <a class="btn" href={`https://youtube.com/shorts/${c.youtube_id}`} target="_blank">Open on YouTube ↗</a> : null}
+            {c.video_key ? <a class="btn sm" href={`/media/${c.video_key}?download=1`}>Download</a> : null}
+            {(["youtube", "tiktok", "instagram"] as const).map((pf) =>
+              props.states[pf].url ? <a class="btn sm" href={props.states[pf].url} target="_blank" rel="noopener">{PF[pf].name} ↗</a> : null,
+            )}
           </div>
         </div>
         <div>
           <h1>{c.title ?? c.id}</h1>
-          <p class="row">
-            <span class="score">score {Math.round(c.score ?? 0)}</span>
-            <Pill v={c.stage} /> <Pill v={c.review} />
-            <span class="muted">source {c.start.toFixed(1)}–{c.end.toFixed(1)}s{c.layout ? ` · ${c.layout} layout` : ""}</span>
-          </p>
-          {c.reason ? <p class="muted">Why: {c.reason}</p> : null}
-          {c.error ? <div class="err">{c.error}</div> : null}
+          <div class="row" style="margin-top:8px">
+            <span class="score" style="color:var(--accent)">{Math.round(c.score ?? 0)}</span>
+            <Pill v={c.review} />
+            {!["published", "uploaded", "rendered"].includes(c.stage) ? <Pill v={c.stage} /> : null}
+            <span class="muted small">
+              {c.duration ? `${Math.round(c.duration)}s · ` : ""}source {c.start.toFixed(1)}–{c.end.toFixed(1)}s{c.layout ? ` · ${c.layout} layout` : ""}
+            </span>
+          </div>
 
-          <form class="edit" method="post" action={`/clips/${c.id}`}>
-            <label>Title<input name="title" maxlength={100} value={c.title ?? ""} /></label>
-            <label>Description<textarea name="description">{c.description ?? ""}</textarea></label>
-            <label>Tags (comma separated)<input name="tags" value={tags.join(", ")} /></label>
-            {props.credit ? <p class="muted">Credit added automatically: “Original: {props.credit}”</p> : null}
-            <div class="row">
-              <button type="submit" name="review" value="approved" class="primary">Save &amp; approve</button>
-              <button type="submit" name="review" value={c.review}>Save</button>
-              <button type="submit" name="review" value="rejected" class="danger">Reject</button>
-            </div>
-          </form>
+          <div class="status">
+            {(["youtube", "tiktok", "instagram"] as const).map((pf) => {
+              const s = props.states[pf];
+              return (
+                <a class="tile" href={`#${pf}`} onclick={`document.querySelector('[data-tab=${pf}]').click();return false`}>
+                  <b>{PF[pf].name}</b>
+                  <span class="row"><PfMark pf={pf} s={s} /> {s.label}</span>
+                </a>
+              );
+            })}
+          </div>
 
-          <h2>YouTube</h2>
-          {!c.youtube_id && props.youtubeChannel === null ? (
-            <p class="muted">Not connected. <a href="/accounts">Connect YouTube</a></p>
-          ) : c.youtube_id ? (
-            <p>Uploaded as <code>{c.youtube_id}</code>. Publish it from YouTube Studio.</p>
-          ) : (
-            <form method="post" action={`/clips/${c.id}/youtube`} class="row">
-              {props.youtubeChannel ? <span class="muted" style="width:100%">Uploading to <b>{props.youtubeChannel}</b></span> : null}
-              <select name="privacy">
-                <option value="private">private (draft)</option>
-                <option value="unlisted">unlisted</option>
-                <option value="public">public</option>
-              </select>
-              <button type="submit" class="primary" disabled={!c.video_key}>Upload to YouTube</button>
+          {c.error ? <div class="err" style="margin-bottom:12px">{c.error}</div> : null}
+
+          <div class="tabs" role="tablist" data-tabs={props.defaultTab}>
+            <button type="button" role="tab" data-tab="details">Details</button>
+            <button type="button" role="tab" data-tab="youtube">YouTube</button>
+            <button type="button" role="tab" data-tab="tiktok">TikTok</button>
+            <button type="button" role="tab" data-tab="instagram">Instagram</button>
+          </div>
+
+          <section data-panel="details">
+            {c.reason ? <p class="callout" style="margin:0 0 16px"><b style="color:var(--text)">Why this moment:</b> {c.reason}</p> : null}
+            <form class="stack" method="post" action={`/clips/${c.id}`}>
+              <label>
+                Title
+                <input name="title" maxlength={100} value={c.title ?? ""} data-count="100" />
+                <span class="field-foot"><span>Used as the YouTube title and the first caption line.</span><span class="count" /></span>
+              </label>
+              <label>
+                Description
+                <textarea name="description" data-count="5000">{c.description ?? ""}</textarea>
+                <span class="field-foot"><span /><span class="count" /></span>
+              </label>
+              <label>
+                Tags
+                <input name="tags" value={tags.join(", ")} placeholder="comma, separated" />
+                <span class="field-foot"><span>Become hashtags in auto captions.</span></span>
+              </label>
+              {props.credit ? <p class="muted small" style="margin:0">Credit added automatically: “{props.credit}”</p> : null}
+              <div class="row">
+                <button type="submit" name="review" value="approved" class="primary">Save &amp; approve</button>
+                <button type="submit" name="review" value={c.review}>Save</button>
+                <button type="submit" name="review" value="rejected" class="danger ghost">Reject</button>
+              </div>
             </form>
-          )}
-          {props.social}
+          </section>
+          <section data-panel="youtube" id="youtube">{props.panels.youtube}</section>
+          <section data-panel="tiktok" id="tiktok">{props.panels.tiktok}</section>
+          <section data-panel="instagram" id="instagram">{props.panels.instagram}</section>
         </div>
       </div>
     </>
