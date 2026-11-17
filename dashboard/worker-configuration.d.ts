@@ -20,8 +20,9 @@ interface __BaseEnv_Env {
 	TOKEN_ENC_KEY: string;
 	TIKTOK_CLIENT_KEY: string;
 	TIKTOK_CLIENT_SECRET: string;
-	IG_APP_ID: string;
-	IG_APP_SECRET: string;
+	META_APP_ID: string;
+	META_APP_SECRET: string;
+	META_CONFIG_ID: string;
 	R2_ACCOUNT_ID: string;
 	R2_ACCESS_KEY_ID: string;
 	R2_SECRET_ACCESS_KEY: string;

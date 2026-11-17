@@ -73,7 +73,7 @@ All secrets and account-specific IDs live in the Infisical project **njmtech-cli
 | `YT_CLIENT_ID`, `YT_CLIENT_SECRET` | dashboard **Accounts → Connect YouTube** (Google OAuth *Web application* client) |
 | `TOKEN_ENC_KEY` | encrypts TikTok/Instagram tokens stored in D1 (`openssl rand -base64 32`) |
 | `TIKTOK_CLIENT_KEY`, `TIKTOK_CLIENT_SECRET` | dashboard "Post to TikTok" |
-| `IG_APP_ID`, `IG_APP_SECRET` | dashboard "Post to Instagram" (also needs the `R2_*` keys, synced to the Worker) |
+| `META_APP_ID`, `META_APP_SECRET`, `META_CONFIG_ID` | dashboard "Post to Instagram" (Unified login; also needs the `R2_*` keys, synced to the Worker) |
 
 Claude runs on **Amazon Bedrock** (`eu.anthropic.claude-sonnet-4-6`; Opus 5.5 once AWS enables it for the account) with IAM credentials, so no API key is needed. The account must first submit Anthropic's use-case form once: Bedrock console → Model catalog → any Claude model.
 
@@ -171,13 +171,15 @@ Each clip page has **TikTok** and **Instagram** sections next to YouTube.
    - Redirect URI `https://<dashboard>/oauth/tiktok/callback`.
    - Put the client key/secret in Infisical as `TIKTOK_CLIENT_KEY` / `TIKTOK_CLIENT_SECRET`.
    - **Until TikTok audits the app, direct posts are private ("Only me") and the posting account must be private.** Drafts work for any account. Apply for the audit from the app page once it works.
-2. **Instagram** ([developers.facebook.com](https://developers.facebook.com/apps)): create an app (Business type).
-   - Add **Instagram → API setup with Instagram login**.
-   - Business login redirect URL `https://<dashboard>/oauth/instagram/callback`.
-   - Permissions `instagram_business_basic`, `instagram_business_content_publish`.
-   - Put the *Instagram* app ID/secret in Infisical as `IG_APP_ID` / `IG_APP_SECRET`.
-   - The account must be a **Business or Creator** account. While the app is in development mode, add the account under App roles → Instagram testers and accept the invite in Instagram.
-   - Instagram downloads the video from a presigned R2 link that expires after 2 hours, so the dashboard stays behind Access.
+2. **Instagram** ([developers.facebook.com](https://developers.facebook.com/apps)) uses the **Instagram API with Unified Login**, Meta's setup for new apps.
+   - Create a **business portfolio** (business.facebook.com) and add the Instagram account to it. The account must be a **Business or Creator** account.
+   - Create an app with the use case **Manage messaging & content on Instagram**, owned by that portfolio.
+   - **App settings → Basic:** privacy policy `https://njmtech.co.za/clippers-policy`, terms `https://njmtech.co.za/clippers-terms`.
+   - **Use cases → Customize → API setup with Unified login → Create new configuration:**
+     - Pick a token that **never expires**, and keep `instagram_basic` and `instagram_content_publish`.
+     - Redirect URL `https://<dashboard>/oauth/instagram/callback`.
+   - Put the *Meta* app ID/secret (App settings → Basic) and the configuration ID in Infisical as `META_APP_ID`, `META_APP_SECRET` and `META_CONFIG_ID`.
+   - On connect, select the Instagram account to share. Instagram downloads each video from a presigned R2 link that expires after 2 hours, so the dashboard stays behind Access.
 3. Add `TOKEN_ENC_KEY` to Infisical, then run `./scripts/dashboard.sh migrate` and `./scripts/sync-worker-secrets.sh`.
 
 ## YouTube API notes

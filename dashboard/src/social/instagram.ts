@@ -1,16 +1,18 @@
 /**
- * Instagram API with Instagram Login: publish clips as Reels to a professional (Business/Creator) account.
- * Docs: developers.facebook.com/docs/instagram-platform/content-publishing (+ business-login).
+ * Instagram API with Unified Login (Facebook Login for Business): publish clips as Reels to a
+ * professional (Business/Creator) account owned by a business portfolio.
+ * Docs: developers.facebook.com/documentation/instagram-platform/instagram-api-with-unified-login
+ * (+ content-publishing). Login uses a Login for Business configuration (META_CONFIG_ID); the token
+ * is a Business Integration System User token (pick "never expires" in the configuration).
  * Instagram fetches the video itself from `video_url`: a short-lived presigned R2 link, so the
  * dashboard stays behind Cloudflare Access.
  */
 import { AwsClient } from "aws4fetch";
 import { getAccount, saveAccount, type Account } from "./tokens";
 
-const GRAPH = "https://graph.instagram.com";
+const GRAPH = "https://graph.facebook.com";
 const VERSION = "v27.0";
-export const IG_SCOPES = "instagram_business_basic,instagram_business_content_publish";
-const DAY = 86_400_000;
+const NEVER = Date.UTC(9999, 0, 1);
 
 type GraphError = { error?: { message: string; type?: string; code?: number } };
 
@@ -26,62 +28,40 @@ async function graph<T>(method: "GET" | "POST", path: string, token: string, bod
 }
 
 export function authorizeUrl(env: Env, redirectUri: string, state: string): string {
-  const q = new URLSearchParams({ client_id: env.IG_APP_ID, redirect_uri: redirectUri, response_type: "code", scope: IG_SCOPES, state });
-  return `https://www.instagram.com/oauth/authorize?${q}`;
+  if (!env.META_APP_ID || !env.META_CONFIG_ID) throw new Error("META_APP_ID / META_CONFIG_ID are not set on the Worker");
+  const q = new URLSearchParams({
+    client_id: env.META_APP_ID, config_id: env.META_CONFIG_ID, redirect_uri: redirectUri, response_type: "code", state,
+  });
+  return `https://www.facebook.com/dialog/oauth?${q}`;
 }
 
 export async function connect(env: Env, code: string, redirectUri: string): Promise<Account> {
-  // 1) code → short-lived token (1 h)
-  const res = await fetch("https://api.instagram.com/oauth/access_token", {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      client_id: env.IG_APP_ID, client_secret: env.IG_APP_SECRET, grant_type: "authorization_code", redirect_uri: redirectUri,
-      code: code.replace(/#_$/, ""),
-    }),
+  const q = new URLSearchParams({
+    client_id: env.META_APP_ID, client_secret: env.META_APP_SECRET, redirect_uri: redirectUri, code: code.replace(/#_$/, ""),
   });
-  type Short = { access_token: string; user_id: string | number } & { error_message?: string };
-  const raw = (await res.json()) as Short | { data: Short[] } & { error_message?: string };
-  const short = "data" in raw ? raw.data[0] : raw;
-  if (!res.ok || !short?.access_token) throw new Error(`Instagram login: ${raw.error_message ?? res.status}`);
+  const res = await fetch(`${GRAPH}/${VERSION}/oauth/access_token?${q}`);
+  const t = (await res.json()) as { access_token?: string; expires_in?: number } & GraphError;
+  if (!res.ok || !t.access_token) throw new Error(`Instagram login: ${t.error?.message ?? res.status}`);
 
-  // 2) short-lived → long-lived token (60 days)
-  const q = new URLSearchParams({ grant_type: "ig_exchange_token", client_secret: env.IG_APP_SECRET, access_token: short.access_token });
-  const longRes = await fetch(`${GRAPH}/access_token?${q}`);
-  const long = (await longRes.json()) as { access_token: string; expires_in: number } & GraphError;
-  if (!longRes.ok || !long.access_token) throw new Error(`Instagram token exchange: ${long.error?.message ?? longRes.status}`);
-
-  const me = await graph<{ user_id: string; username: string }>("GET", "/me?fields=user_id,username", long.access_token);
+  // With this token /me is the integration's system user; the shared Instagram account is listed here.
+  const { data } = await graph<{ data: { id: string; username: string }[] }>(
+    "GET", "/me/assigned_instagram_accounts?fields=id,username", t.access_token,
+  );
+  const ig = data?.[0];
+  if (!ig) throw new Error("No Instagram account was shared with the app. Connect again and select the Instagram account.");
   const acct: Account = {
-    platform: "instagram", accountId: String(me.user_id ?? short.user_id), accountName: me.username,
-    accessToken: long.access_token, accessExpiresAt: Date.now() + long.expires_in * 1000, refreshToken: null, refreshExpiresAt: null,
+    platform: "instagram", accountId: ig.id, accountName: ig.username, accessToken: t.access_token,
+    accessExpiresAt: t.expires_in ? Date.now() + t.expires_in * 1000 : NEVER, refreshToken: null, refreshExpiresAt: null,
   };
   await saveAccount(env, acct);
   return acct;
 }
 
-/** The long-lived token, refreshed for another 60 days once it's within 10 days of expiring. */
 async function account(env: Env): Promise<Account> {
   const acct = await getAccount(env, "instagram");
   if (!acct) throw new Error("Instagram isn't connected: open Accounts → Connect Instagram");
-  const left = acct.accessExpiresAt - Date.now();
-  if (left <= 0) throw new Error("Instagram session expired: reconnect on the Accounts page");
-  if (left < 10 * DAY) {
-    const q = new URLSearchParams({ grant_type: "ig_refresh_token", access_token: acct.accessToken });
-    const res = await fetch(`${GRAPH}/refresh_access_token?${q}`);
-    const t = (await res.json()) as { access_token?: string; expires_in?: number };
-    if (res.ok && t.access_token && t.expires_in) {
-      const fresh = { ...acct, accessToken: t.access_token, accessExpiresAt: Date.now() + t.expires_in * 1000 };
-      await saveAccount(env, fresh);
-      return fresh;
-    }
-  }
+  if (acct.accessExpiresAt <= Date.now()) throw new Error("Instagram access expired: reconnect on the Accounts page");
   return acct;
-}
-
-/** Keep the token alive even when nothing is posted for weeks (called from the cron). */
-export async function keepAlive(env: Env): Promise<void> {
-  if (await getAccount(env, "instagram").catch(() => null)) await account(env);
 }
 
 /** Presigned GET for an R2 object via its S3 API (Instagram downloads the video from this). */

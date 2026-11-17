@@ -346,7 +346,7 @@ ui.get("/accounts", async (c) =>
         configured={{
           youtube: !!(c.env.YT_CLIENT_ID && c.env.YT_CLIENT_SECRET && c.env.TOKEN_ENC_KEY),
           tiktok: !!(c.env.TIKTOK_CLIENT_KEY && c.env.TIKTOK_CLIENT_SECRET && c.env.TOKEN_ENC_KEY),
-          instagram: !!(c.env.IG_APP_ID && c.env.IG_APP_SECRET && c.env.TOKEN_ENC_KEY && c.env.R2_ACCESS_KEY_ID),
+          instagram: !!(c.env.META_APP_ID && c.env.META_APP_SECRET && c.env.META_CONFIG_ID && c.env.TOKEN_ENC_KEY && c.env.R2_ACCESS_KEY_ID),
         }}
         flash={c.req.query("flash")}
       />
@@ -451,8 +451,8 @@ app.route("/", ui);
 
 export default {
   fetch: app.fetch,
-  // Every minute: finish TikTok/Instagram posts still processing; keep the Instagram token from expiring.
+  // Every minute: finish TikTok/Instagram posts still processing.
   async scheduled(_event, env, ctx) {
-    ctx.waitUntil(Promise.all([advancePending(env), instagram.keepAlive(env)]).then(() => undefined));
+    ctx.waitUntil(advancePending(env));
   },
 } satisfies ExportedHandler<Env>;

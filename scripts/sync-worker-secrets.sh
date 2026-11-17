@@ -4,7 +4,7 @@
 #   INTERNAL_API_TOKEN  ← CLIPPER_API_TOKEN
 #   AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY ← DASHBOARD_AWS_* (IAM user clipper-dashboard: Batch submit/describe + job log reads)
 #   YT_CLIENT_ID / YT_CLIENT_SECRET  (Google OAuth web client; the channel is connected in the dashboard)
-#   TOKEN_ENC_KEY, TIKTOK_CLIENT_KEY/SECRET, IG_APP_ID/SECRET, R2_* (TikTok + Instagram publishing)
+#   TOKEN_ENC_KEY, TIKTOK_CLIENT_KEY/SECRET, META_APP_ID/SECRET/CONFIG_ID, R2_* (TikTok + Instagram publishing)
 set -euo pipefail
 cd "$(dirname "$0")/.."
 ./scripts/dashboard.sh render >/dev/null
@@ -23,8 +23,9 @@ infisical run --env "$ENV" --silent -- bash -c '
   put TOKEN_ENC_KEY "${TOKEN_ENC_KEY:-}"
   put TIKTOK_CLIENT_KEY "${TIKTOK_CLIENT_KEY:-}"
   put TIKTOK_CLIENT_SECRET "${TIKTOK_CLIENT_SECRET:-}"
-  put IG_APP_ID "${IG_APP_ID:-}"
-  put IG_APP_SECRET "${IG_APP_SECRET:-}"
+  put META_APP_ID "${META_APP_ID:-}"
+  put META_APP_SECRET "${META_APP_SECRET:-}"
+  put META_CONFIG_ID "${META_CONFIG_ID:-}"
   put R2_ACCOUNT_ID "${R2_ACCOUNT_ID:-}"
   put R2_ACCESS_KEY_ID "${R2_ACCESS_KEY_ID:-}"
   put R2_SECRET_ACCESS_KEY "${R2_SECRET_ACCESS_KEY:-}"
