@@ -14,6 +14,10 @@ META_CONFIG_ID=
 # Public upload link bot check (Cloudflare Turnstile); unset = no check (local dev only)
 TURNSTILE_SITE_KEY=
 TURNSTILE_SECRET_KEY=
+# Users page: Cloudflare API token (Access groups edit) + the "Clipper users" Access group
+CF_API_TOKEN=
+CF_ACCOUNT_ID=
+CF_ACCESS_GROUP_ID=
 R2_ACCOUNT_ID=
 R2_ACCESS_KEY_ID=
 R2_SECRET_ACCESS_KEY=

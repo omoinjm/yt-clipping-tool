@@ -15,6 +15,8 @@ import { MetricsPage } from "./views/Metrics";
 import pub from "./public";
 import { cleanupAbandoned, getSubmission, getUploadToken, listSubmissions, setSubmission, setUploadToken } from "./submissions";
 import { SubmissionsPage } from "./views/Submissions";
+import { accessConfigured, addUser, listUsers, removeUser } from "./access";
+import { UsersPage } from "./views/Users";
 import { uploadToYouTube } from "./youtube";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 import { captionFor, savedCaptions, withCredit, CAPTION_MAX } from "./social/captions";
@@ -449,6 +451,49 @@ ui.post("/submissions/:id/reject", async (c) => {
     await setSubmission(c.env.DB, sub.id, { status: "rejected" });
   }
   return c.redirect("/submissions?flash=Upload+rejected+and+deleted", 303);
+});
+
+// ── Dashboard users (Cloudflare Access group)
+ui.get("/users", async (c) => {
+  const configured = accessConfigured(c.env);
+  let users: string[] | null = null;
+  let error: string | undefined;
+  if (configured) {
+    try {
+      users = await listUsers(c.env);
+    } catch (err) {
+      error = err instanceof Error ? err.message : String(err);
+    }
+  }
+  return c.html(
+    <Layout title="Users" email={c.get("email")} nav="users">
+      <UsersPage me={c.get("email")} users={users} error={error} configured={configured} flash={c.req.query("flash")} />
+    </Layout>,
+  );
+});
+
+ui.post("/users/add", async (c) => {
+  const email = String((await c.req.parseBody()).email ?? "").trim().toLowerCase();
+  const back = (m: string) => c.redirect(`/users?flash=${encodeURIComponent(m)}`, 303);
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return back("Enter a valid email address");
+  try {
+    await addUser(c.env, email);
+    return back(`Added ${email}. They can sign in now.`);
+  } catch (err) {
+    return back(`Couldn't add user: ${err instanceof Error ? err.message : String(err)}`);
+  }
+});
+
+ui.post("/users/remove", async (c) => {
+  const email = String((await c.req.parseBody()).email ?? "").trim();
+  const back = (m: string) => c.redirect(`/users?flash=${encodeURIComponent(m)}`, 303);
+  if (!email || email.toLowerCase() === c.get("email").toLowerCase()) return back("You can't remove yourself");
+  try {
+    await removeUser(c.env, email);
+    return back(`Removed ${email} and signed them out`);
+  } catch (err) {
+    return back(`Couldn't remove user: ${err instanceof Error ? err.message : String(err)}`);
+  }
 });
 
 // ── Metrics

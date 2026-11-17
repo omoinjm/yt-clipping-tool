@@ -1,7 +1,7 @@
 import type { Child } from "hono/jsx";
 import { raw } from "hono/html";
 
-export type Nav = "clips" | "sources" | "new" | "submissions" | "metrics" | "accounts";
+export type Nav = "clips" | "sources" | "new" | "submissions" | "metrics" | "accounts" | "users";
 
 const CSS = `
 :root{
@@ -248,6 +248,7 @@ const NAV: [Nav, string, string][] = [
   ["submissions", "/submissions", "Submissions"],
   ["metrics", "/metrics", "Metrics"],
   ["accounts", "/accounts", "Accounts"],
+  ["users", "/users", "Users"],
 ];
 
 export function Layout(props: { title: string; email: string; nav?: Nav; refresh?: boolean; children: Child }) {

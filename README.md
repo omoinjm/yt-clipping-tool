@@ -154,6 +154,19 @@ There's no hard cap in AWS, so the stack enforces one.
 - Only clip content you own or have written permission for. Re-uploading other people's videos risks copyright strikes and fails YouTube's "reused content" monetization policy. Captions, hooks and tight edits help, but they don't replace permission.
 - YouTube Partner Program for Shorts: 1,000 subscribers + 10M Shorts views in 90 days.
 
+## Dashboard users
+
+**Users** in the dashboard adds and removes the people who can sign in. All users have full access.
+- Sign-in is Cloudflare Access: users get a one-time code by email, or use your identity provider.
+- Users are the email rules of one Access group, edited through the Cloudflare API.
+- Removing someone also revokes their current Access session.
+
+One-time setup:
+1. **Zero Trust → Access → Rules → Groups:** add the group **Clipper users**, include **Emails** (yours), and save. Copy the group ID from the URL.
+2. **Access → Applications →** the dashboard app **→ Policies:** make the Allow policy include **Access group: Clipper users**. Remove individual email rules, or removing a user won't lock them out.
+3. **My Profile → API Tokens → Create custom token:** Account → **Access: Organizations, Identity Providers, and Groups → Edit**, for this account.
+4. Put `CF_API_TOKEN` and `CF_ACCESS_GROUP_ID` in Infisical (prod), then run `./scripts/sync-worker-secrets.sh`. `CF_ACCOUNT_ID` is synced from `CLOUDFLARE_ACCOUNT_ID`.
+
 ## Public upload link
 
 **Submissions** in the dashboard creates a secret link (`/u/<token>`) that anyone can use to upload a video. Uploaders can only upload; they can't see clips or accounts or post anywhere.
