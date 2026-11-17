@@ -6,8 +6,9 @@
 import { getAccount, saveAccount, type Account } from "./tokens";
 
 const API = "https://open.tiktokapis.com";
-// video.list: metrics (views/likes/comments/shares) for posted videos.
-export const TIKTOK_SCOPES = "user.info.basic,video.publish,video.upload,video.list";
+// Stats need video.list (Display API), which TikTok doesn't offer in Sandbox: add it here once the
+// production app is approved with Display API, then reconnect. Without it, metrics just stay empty.
+export const TIKTOK_SCOPES = "user.info.basic,video.publish,video.upload";
 const MB = 1024 * 1024;
 
 export type CreatorInfo = {

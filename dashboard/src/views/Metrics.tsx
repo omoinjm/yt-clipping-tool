@@ -24,7 +24,7 @@ function hints(rows: MetricRow[]): string[] {
   const out = new Set<string>();
   for (const r of rows) {
     if (r.platform === "tiktok" && r.error && /scope|permission|unauthori[sz]ed|access_token/i.test(r.error))
-      out.add("TikTok stats need the video.list scope: add it to the TikTok app, then Reconnect TikTok on Accounts.");
+      out.add("TikTok stats need the Display API (video.list scope), which TikTok only grants after app review; they'll appear once the reviewed app is connected.");
     else if (r.platform === "tiktok" && r.error) out.add(`TikTok: ${r.error}`);
     if (r.platform === "instagram" && !r.error && r.views == null)
       out.add("Instagram views need the instagram_manage_insights permission: add it to the Meta login configuration, then Reconnect Instagram.");
