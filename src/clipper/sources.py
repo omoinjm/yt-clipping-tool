@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -67,22 +68,47 @@ def is_cc_by(license_text: str | None) -> bool:
     return any(m in text for m in CC_BY_MARKERS)
 
 
-def fetch(src: Source, dest_dir: Path) -> Path:
+def _cookie_file(dest_dir: Path, cookies: str | None) -> Path | None:
+    """YouTube login cookies (Netscape cookies.txt), for when YouTube asks datacenter IPs to "sign in
+    to confirm you're not a bot". From the dashboard's Settings page, else the YT_COOKIES env var."""
+    raw = (cookies or os.environ.get("YT_COOKIES", "")).strip()
+    if not raw:
+        return None
+    path = dest_dir / "yt-cookies.txt"
+    path.write_text(raw.replace("\\n", "\n") + "\n")
+    path.chmod(0o600)
+    return path
+
+
+def fetch(src: Source, dest_dir: Path, cookies: str | None = None) -> Path:
     """Return a local file for the source (downloads URLs with yt-dlp)."""
     if src.path:
         p = Path(src.path).expanduser()
         if not p.exists():
             raise FileNotFoundError(p)
         return p
-    import yt_dlp
-
     opts = {
         "outtmpl": str(dest_dir / "download.%(ext)s"),
         "format": "bv*[height<=1080]+ba/b[height<=1080]",
         "merge_output_format": "mp4",
         "quiet": True,
         "noprogress": True,
+        # YouTube's JS challenges are solved by yt-dlp-ejs on a JS runtime; the image ships Node (deno is the default).
+        "js_runtimes": {"node": {}},
     }
+    cookie_path = _cookie_file(dest_dir, cookies)
+    if cookie_path:
+        opts["cookiefile"] = str(cookie_path)
+    try:
+        return _download(src, opts)
+    finally:
+        if cookie_path:
+            cookie_path.unlink(missing_ok=True)  # don't leave login cookies in the (S3-synced) work dir
+
+
+def _download(src: Source, opts: dict) -> Path:
+    import yt_dlp
+
     with yt_dlp.YoutubeDL(opts) as ydl:
         if src.permission == "cc_by":
             meta = ydl.extract_info(src.url, download=False)

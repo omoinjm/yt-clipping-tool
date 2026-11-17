@@ -99,6 +99,16 @@ class ApiState:
     def update_clip(self, clip_id: str, **fields: Any) -> None:
         self._call("PATCH", f"/clips/{clip_id}", fields)
 
+    def yt_cookies(self) -> str | None:
+        """YouTube cookies.txt saved in the dashboard (Settings), or None if none is set."""
+        req = urllib.request.Request(self.base + "/settings/yt-cookies", headers=self.headers)
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                text = resp.read().decode()
+        except urllib.error.HTTPError as e:
+            raise ApiError(f"GET /settings/yt-cookies → {e.code}") from e
+        return text.strip() or None
+
 
 @lru_cache(maxsize=1)
 def get_state() -> State:

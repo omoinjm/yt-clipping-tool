@@ -1,0 +1,90 @@
+import { raw } from "hono/html";
+import type { CookieMeta } from "../ytcookies";
+import { ago, Flash, Pill } from "./Layout";
+import { Logo } from "./Logos";
+
+const FILE_JS = `
+document.getElementById('ck-file').addEventListener('change',function(e){
+  var f=e.target.files[0];if(!f)return;var r=new FileReader();
+  r.onload=function(){var t=document.getElementById('ck-text');t.value=r.result;t.dispatchEvent(new Event('input',{bubbles:true}))};r.readAsText(f);
+});`;
+
+function expiry(meta: CookieMeta): { text: string; tone: string } {
+  if (!meta.expires_at) return { text: "no expiry date in the file", tone: "" };
+  const days = Math.floor((meta.expires_at * 1000 - Date.now()) / 86_400_000);
+  if (days < 0) return { text: "expired: export new ones", tone: "bad" };
+  return { text: `login cookies expire in ${days} day${days === 1 ? "" : "s"}`, tone: days < 14 ? "warn" : "ok" };
+}
+
+export function SettingsPage(props: { cookies: CookieMeta | null; flash?: string }) {
+  const m = props.cookies;
+  const exp = m ? expiry(m) : null;
+  return (
+    <>
+      <div class="page-head">
+        <div>
+          <h1>Settings</h1>
+          <p class="sub" style="margin:4px 0 0">Settings for the clipping jobs.</p>
+        </div>
+      </div>
+      <Flash msg={props.flash} />
+
+      <section class="panel" style="display:flex;flex-direction:column;gap:14px">
+        <div class="row" style="justify-content:space-between">
+          <b class="row" style="gap:8px"><Logo pf="youtube" size={18} /> YouTube download cookies</b>
+          {m ? <Pill v={exp?.tone === "bad" ? "failed" : "published"} label={exp?.tone === "bad" ? "expired" : "saved"} /> : <Pill v="none" label="not set" />}
+        </div>
+        <p class="muted" style="margin:0">
+          YouTube often blocks downloads from the GPU servers with “Sign in to confirm you're not a bot”. Cookies from a signed-in
+          account get past that. They're only used to download source videos, are stored encrypted, and the job deletes its copy after each download.
+        </p>
+        {m ? (
+          <div class="panel" style="background:var(--bg);display:flex;flex-direction:column;gap:4px">
+            <span>{m.youtube} YouTube cookies ({m.total} total) · {m.logged_in ? "signed in" : "not signed in"}</span>
+            <span class="muted small" style={exp?.tone === "bad" ? "color:var(--bad)" : exp?.tone === "warn" ? "color:var(--warn)" : undefined}>
+              {exp?.text} · saved {ago(m.saved_at.replace("T", " ").slice(0, 19))} by {m.saved_by}
+            </span>
+          </div>
+        ) : null}
+
+        <details class="fold" open={!m}>
+          <summary>{m ? "Replace cookies" : "How to export cookies"}</summary>
+          <div class="body" style="display:flex;flex-direction:column;gap:12px">
+            <ol class="muted" style="margin:0;padding-left:18px;line-height:1.7">
+              <li>Use a <b style="color:var(--text)">spare Google account</b>, not your main one: YouTube may flag accounts used from servers.</li>
+              <li>Open a <b style="color:var(--text)">private/incognito window</b>, sign in to YouTube, then go to <code>youtube.com/robots.txt</code> in the same tab.</li>
+              <li>Export cookies for youtube.com with a cookies.txt extension (e.g. “Get cookies.txt LOCALLY”), Netscape format.</li>
+              <li><b style="color:var(--text)">Close the private window</b> right away, so YouTube doesn't rotate the cookies you just exported.</li>
+              <li>Upload or paste the file below.</li>
+            </ol>
+            <form method="post" action="/settings/yt-cookies" class="stack">
+              <div class="row">
+                <label class="btn sm" style="flex-direction:row;cursor:pointer">
+                  Choose cookies.txt file
+                  <input type="file" id="ck-file" accept=".txt,text/plain" hidden />
+                </label>
+                <span class="muted small">or paste it:</span>
+              </div>
+              <label>
+                <textarea id="ck-text" name="cookies" required placeholder="# Netscape HTTP Cookie File&#10;.youtube.com	TRUE	/	TRUE	1830000000	LOGIN_INFO	…"
+                  style="font:12px/1.5 ui-monospace,monospace;min-height:140px" spellcheck={false} autocomplete="off" />
+              </label>
+              <div class="row">
+                <button class="primary" type="submit">Save cookies</button>
+                <span class="muted small">Checked before saving: it must be a signed-in youtube.com export.</span>
+              </div>
+            </form>
+          </div>
+        </details>
+
+        {m ? (
+          <form method="post" action="/settings/yt-cookies/delete">
+            <button class="sm danger ghost" type="submit" data-confirm-title="Remove YouTube cookies?" data-confirm-ok="Remove"
+              data-confirm="Jobs will download from YouTube without signing in, which the bot check usually blocks.">Remove cookies</button>
+          </form>
+        ) : null}
+      </section>
+      <script>{raw(FILE_JS)}</script>
+    </>
+  );
+}

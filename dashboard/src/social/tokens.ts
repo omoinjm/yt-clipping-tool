@@ -39,13 +39,13 @@ function key(env: Env): Promise<CryptoKey> {
 const b64 = (b: Uint8Array) => btoa(String.fromCharCode(...b));
 const unb64 = (s: string) => Uint8Array.from(atob(s), (ch) => ch.charCodeAt(0));
 
-async function seal(env: Env, plain: string): Promise<string> {
+export async function seal(env: Env, plain: string): Promise<string> {
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const ct = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, await key(env), new TextEncoder().encode(plain));
   return `${b64(iv)}.${b64(new Uint8Array(ct))}`;
 }
 
-async function open(env: Env, sealed: string): Promise<string> {
+export async function open(env: Env, sealed: string): Promise<string> {
   const [iv, ct] = sealed.split(".");
   const pt = await crypto.subtle.decrypt({ name: "AES-GCM", iv: unb64(iv) }, await key(env), unb64(ct));
   return new TextDecoder().decode(pt);

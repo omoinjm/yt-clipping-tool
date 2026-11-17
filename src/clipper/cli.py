@@ -177,7 +177,13 @@ def cloud_run(source_id: str) -> None:
             if origin.startswith(("s3://", "r2://")):
                 raw = storage.download(origin, wd / ("download" + Path(origin).suffix))
             else:
-                raw = sources_mod.fetch(src, wd)  # verifies the CC BY license for cc_by sources
+                cookies = None
+                if isinstance(state, ApiState):
+                    try:
+                        cookies = state.yt_cookies()  # saved in the dashboard's Settings page
+                    except Exception as e:  # downloads still work for most sites without them
+                        pipeline.log(f"! could not load YouTube cookies from the dashboard: {e}")
+                raw = sources_mod.fetch(src, wd, cookies)  # verifies the CC BY license for cc_by sources
             pipeline.ingest(state, {k: row[k] for k in ("id", "origin", "owner", "permission", "proof", "credit")}, raw)
             raw.unlink(missing_ok=True)
             checkpoint()

@@ -154,6 +154,18 @@ There's no hard cap in AWS, so the stack enforces one.
 - Only clip content you own or have written permission for. Re-uploading other people's videos risks copyright strikes and fails YouTube's "reused content" monetization policy. Captions, hooks and tight edits help, but they don't replace permission.
 - YouTube Partner Program for Shorts: 1,000 subscribers + 10M Shorts views in 90 days.
 
+## YouTube downloads (cookies)
+
+YouTube often blocks downloads from AWS with "Sign in to confirm you're not a bot".
+
+To get past it, go to **Settings → YouTube download cookies** in the dashboard:
+- Paste or upload a `cookies.txt` export from a **spare** Google account. The page lists the export steps.
+- The dashboard checks it's a signed-in youtube.com export, stores it encrypted (`TOKEN_ENC_KEY`), and shows when the login cookies expire.
+
+The GPU job fetches the cookies at download time from `GET /api/internal/settings/yt-cookies` (bearer token), hands them to yt-dlp, and deletes its copy afterwards. A `YT_COOKIES` env var still works as a fallback.
+
+yt-dlp solves YouTube's JS challenges with `yt-dlp-ejs` on the image's Node runtime. If cookies stop helping, download the video locally and upload it instead.
+
 ## Channels
 
 A **channel** is a niche brand with its own YouTube, TikTok and Instagram accounts. Manage channels under **Channels** in the dashboard.

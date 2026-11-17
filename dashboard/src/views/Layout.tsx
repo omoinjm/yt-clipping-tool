@@ -2,7 +2,7 @@ import type { Child } from "hono/jsx";
 import { raw } from "hono/html";
 import type { ChannelRow } from "../channels";
 
-export type Nav = "clips" | "sources" | "new" | "submissions" | "metrics" | "channels" | "users";
+export type Nav = "clips" | "sources" | "new" | "submissions" | "metrics" | "channels" | "users" | "settings";
 
 const CSS = `
 :root{
@@ -254,6 +254,7 @@ const NAV: [Nav, string, string][] = [
   ["metrics", "/metrics", "Metrics"],
   ["channels", "/channels", "Channels"],
   ["users", "/users", "Users"],
+  ["settings", "/settings", "Settings"],
 ];
 
 export function Layout(props: {

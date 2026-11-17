@@ -17,6 +17,8 @@ import { cleanupAbandoned, getSubmission, getUploadToken, listSubmissions, setSu
 import { SubmissionsPage } from "./views/Submissions";
 import { accessConfigured, addUser, listUsers, removeUser } from "./access";
 import { UsersPage } from "./views/Users";
+import { cookieMeta, deleteCookies, getCookies, inspectCookies, saveCookies } from "./ytcookies";
+import { SettingsPage } from "./views/Settings";
 import { uploadToYouTube } from "./youtube";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 import { captionFor, savedCaptions, withCredit, CAPTION_MAX } from "./social/captions";
@@ -66,6 +68,13 @@ api.get("/clips", async (c) =>
 api.patch("/clips/:id", async (c) => {
   await db.updateClip(c.env.DB, c.req.param("id"), await c.req.json());
   return c.body(null, 204);
+});
+
+// YouTube download cookies for the GPU job (saved on the Settings page). Empty body = none set.
+api.get("/settings/yt-cookies", async (c) => {
+  const text = await getCookies(c.env);
+  c.header("Cache-Control", "no-store");
+  return c.text(text ?? "");
 });
 
 app.route("/api/internal", api);
@@ -516,6 +525,29 @@ ui.post("/users/remove", async (c) => {
   } catch (err) {
     return back(`Couldn't remove user: ${err instanceof Error ? err.message : String(err)}`);
   }
+});
+
+// ── Settings (YouTube download cookies)
+ui.get("/settings", async (c) =>
+  c.html(
+    <Layout title="Settings" email={c.get("email")} channels={c.get("channels")} scope={c.get("scope")} nav="settings">
+      <SettingsPage cookies={await cookieMeta(c.env.DB)} flash={c.req.query("flash")} />
+    </Layout>,
+  ),
+);
+
+ui.post("/settings/yt-cookies", async (c) => {
+  const text = String((await c.req.parseBody()).cookies ?? "").trim();
+  const back = (m: string) => c.redirect(`/settings?flash=${encodeURIComponent(m)}`, 303);
+  const { errors, meta } = inspectCookies(text);
+  if (errors.length) return back(`Not saved: ${errors.join(" ")}`);
+  await saveCookies(c.env, text, c.get("email"));
+  return back(`Saved ${meta.youtube} YouTube cookies. Retry the failed source to use them.`);
+});
+
+ui.post("/settings/yt-cookies/delete", async (c) => {
+  await deleteCookies(c.env.DB);
+  return c.redirect("/settings?flash=YouTube+cookies+removed", 303);
 });
 
 // ── Metrics

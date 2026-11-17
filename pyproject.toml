@@ -16,7 +16,7 @@ dependencies = [
     "scenedetect[opencv]>=0.7.3",
     "typer>=0.29.1",
     "whisperx>=3.8.6",
-    "yt-dlp>=2026.10.26",
+    "yt-dlp[default]>=2026.10.26",  # [default] brings yt-dlp-ejs, the YouTube challenge solver
 ]
 
 [build-system]
