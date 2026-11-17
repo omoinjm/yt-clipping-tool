@@ -19,6 +19,16 @@ export type CreatorInfo = {
   max_video_post_duration_sec: number;
 };
 
+/** Plain-language versions of TikTok errors people actually hit. */
+const FRIENDLY: Record<string, string> = {
+  unaudited_client_can_only_post_to_private_accounts:
+    "TikTok only allows “Post now” on private accounts until it approves (audits) this app. Use “Send to TikTok drafts” instead.",
+  spam_risk_too_many_posts: "TikTok's daily posting limit for this account was reached. Try again tomorrow.",
+  spam_risk_user_banned_from_posting: "TikTok has blocked this account from posting.",
+  privacy_level_option_mismatch: "That “Who can view” option isn't available for this account.",
+  reached_active_user_cap: "This app reached TikTok's daily limit of posting users. Try again tomorrow.",
+};
+
 type TikTokResp<T> = { data: T; error: { code: string; message: string; log_id?: string } };
 
 async function call<T>(token: string, path: string, body: unknown): Promise<T> {
@@ -29,7 +39,9 @@ async function call<T>(token: string, path: string, body: unknown): Promise<T> {
   });
   const json = (await res.json().catch(() => null)) as TikTokResp<T> | null;
   if (!res.ok || !json || (json.error && json.error.code !== "ok"))
-    throw new Error(`TikTok ${path}: ${json?.error?.code ?? res.status} ${json?.error?.message ?? ""}`.trim());
+    throw new Error(
+      FRIENDLY[json?.error?.code ?? ""] ?? `TikTok ${path}: ${json?.error?.code ?? res.status} ${json?.error?.message ?? ""}`.trim(),
+    );
   return json.data;
 }
 

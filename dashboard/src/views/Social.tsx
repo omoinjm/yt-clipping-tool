@@ -119,10 +119,11 @@ export function SocialSection(props: {
           <CaptionField platform="tiktok" caption={props.captions.tiktok} />
           <div class="row">
             <label style="flex-direction:row;align-items:center;gap:6px">
-              <input type="radio" name="mode" value="direct" checked /> Post now
+              <input type="radio" name="mode" value="direct" /> Post now
             </label>
             <label style="flex-direction:row;align-items:center;gap:6px">
-              <input type="radio" name="mode" value="draft" /> Send to TikTok drafts
+              {/* Default: drafts work on public accounts before TikTok's audit; direct posts don't. */}
+              <input type="radio" name="mode" value="draft" checked /> Send to TikTok drafts
             </label>
           </div>
           <label>
@@ -144,7 +145,7 @@ export function SocialSection(props: {
             })}
           </div>
           <p class="muted" style="font-size:12px;margin:0">
-            Drafts don't carry the caption: paste it in the TikTok app. Until TikTok audits this app, “Post now” only works with “Only me”.
+            Drafts don't carry the caption: paste it in the TikTok app. Until TikTok audits this app, “Post now” only works with “Only me” on a private TikTok account.
             By posting, you agree to TikTok's{" "}
             <a href="https://www.tiktok.com/legal/page/global/music-usage-confirmation/en" target="_blank">Music Usage Confirmation</a>.
           </p>
