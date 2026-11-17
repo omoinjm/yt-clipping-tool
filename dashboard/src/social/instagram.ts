@@ -113,3 +113,21 @@ export async function advance(
   }
   return { ok: true, postId: mediaId, url };
 }
+
+/**
+ * Likes and comments always; views/shares/saves when the configuration includes instagram_manage_insights.
+ */
+export async function mediaStats(env: Env, mediaId: string): Promise<import("../youtube").Stats> {
+  const acct = await account(env);
+  const m = await graph<{ like_count?: number; comments_count?: number }>("GET", `/${mediaId}?fields=like_count,comments_count`, acct.accessToken);
+  const stats: import("../youtube").Stats = { likes: m.like_count, comments: m.comments_count };
+  try {
+    type Ins = { data: { name: string; values?: { value: number }[]; total_value?: { value: number } }[] };
+    const ins = await graph<Ins>("GET", `/${mediaId}/insights?metric=views,shares,saved`, acct.accessToken);
+    const get = (n: string) => { const d = ins.data.find((x) => x.name === n); return d?.total_value?.value ?? d?.values?.[0]?.value; };
+    Object.assign(stats, { views: get("views"), shares: get("shares"), saves: get("saved") });
+  } catch {
+    /* no insights permission: likes/comments only */
+  }
+  return stats;
+}

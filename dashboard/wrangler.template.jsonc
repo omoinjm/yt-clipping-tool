@@ -14,8 +14,9 @@
     { "binding": "DB", "database_name": "clipper", "database_id": "${D1_DATABASE_ID}", "migrations_dir": "migrations" }
   ],
   "r2_buckets": [{ "binding": "CLIPS", "bucket_name": "clipper-clips" }],
-  // Each minute: finish TikTok/Instagram posts that are still processing (src/social/posts.ts).
-  "triggers": { "crons": ["* * * * *"] },
+  // Each minute: finish TikTok/Instagram posts still processing (src/social/posts.ts).
+  // Hourly (:05): refresh metrics and check whether TikTok drafts were posted (src/index.tsx scheduled).
+  "triggers": { "crons": ["* * * * *", "5 * * * *"] },
   "vars": {
     "YT_CATEGORY_ID": "22",
     // AWS Batch target for the "New source" form (key: secrets AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY).

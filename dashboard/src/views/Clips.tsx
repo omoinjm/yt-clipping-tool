@@ -3,6 +3,8 @@ import type { ClipRow } from "../db";
 import type { PostRow } from "../social/posts";
 import type { Platform } from "../social/tokens";
 import { Flash, Pill } from "./Layout";
+import { compact, total, type ClipMetrics } from "../social/metrics";
+import { StatLine } from "./Metrics";
 
 export type AnyPlatform = "youtube" | Platform;
 export type PState = { state: "live" | "drafted" | "processing" | "failed" | "none"; label: string; url?: string };
@@ -41,7 +43,7 @@ export const PfMark = (p: { pf: AnyPlatform; s: PState }) => (
   <span class={`pf ${PF[p.pf].cls} ${p.s.state}`} title={`${PF[p.pf].name}: ${p.s.label}`}>{PF[p.pf].short}</span>
 );
 
-export function ClipGrid(props: { clips: ClipRow[]; posts?: LatestPosts; empty?: Child }) {
+export function ClipGrid(props: { clips: ClipRow[]; posts?: LatestPosts; metrics?: Map<string, ClipMetrics>; empty?: Child }) {
   if (props.clips.length === 0)
     return <div class="empty">{props.empty ?? <>No clips yet. <a href="/sources/new">Add a source</a> to get some.</>}</div>;
   return (
@@ -54,6 +56,9 @@ export function ClipGrid(props: { clips: ClipRow[]; posts?: LatestPosts; empty?:
             <div class="thumb">
               {c.thumb_key ? <img loading="lazy" src={`/media/${c.thumb_key}`} alt="" /> : <div class="ph">{c.stage}</div>}
               <span class="tl ov score">{Math.round(c.score ?? 0)}</span>
+              {total(props.metrics?.get(c.id), "views") != null ? (
+                <span class="ov" style="position:absolute;top:8px;right:8px;z-index:2" title="Total views">▶ {compact(total(props.metrics?.get(c.id), "views"))}</span>
+              ) : null}
               {c.duration ? <span class="br ov">{Math.round(c.duration)}s</span> : null}
               <span class="bl">{(["youtube", "tiktok", "instagram"] as const).map((pf) => <PfMark pf={pf} s={st[pf]} />)}</span>
             </div>
@@ -114,6 +119,7 @@ export function ClipPage(props: {
   credit: string | null;
   flash?: string;
   states: Record<AnyPlatform, PState>;
+  metrics?: ClipMetrics;
   nav: { prev?: string; next?: string; index: number; total: number };
   defaultTab: string;
   panels: { youtube: Child; tiktok: Child; instagram: Child };
@@ -163,6 +169,7 @@ export function ClipPage(props: {
                 <a class="tile" href={`#${pf}`} onclick={`document.querySelector('[data-tab=${pf}]').click();return false`}>
                   <b>{PF[pf].name}</b>
                   <span class="row"><PfMark pf={pf} s={s} /> {s.label}</span>
+                  {s.state === "live" ? <StatLine m={props.metrics?.[pf]} /> : null}
                 </a>
               );
             })}

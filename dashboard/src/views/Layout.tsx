@@ -1,7 +1,7 @@
 import type { Child } from "hono/jsx";
 import { raw } from "hono/html";
 
-export type Nav = "clips" | "sources" | "new" | "accounts";
+export type Nav = "clips" | "sources" | "new" | "metrics" | "accounts";
 
 const CSS = `
 :root{
@@ -218,6 +218,7 @@ const NAV: [Nav, string, string][] = [
   ["clips", "/", "Clips"],
   ["sources", "/sources", "Sources"],
   ["new", "/sources/new", "New source"],
+  ["metrics", "/metrics", "Metrics"],
   ["accounts", "/accounts", "Accounts"],
 ];
 

@@ -10,6 +10,8 @@ import { describeJobs, logTail, submitBatchJob, type LogLine } from "./aws";
 import { progress, syncBatch } from "./progress";
 import { LogPanel, ProgressPanel, RetryForm } from "./views/Progress";
 import * as youtube from "./youtube";
+import { allMetrics, refreshMetrics } from "./social/metrics";
+import { MetricsPage } from "./views/Metrics";
 import { uploadToYouTube } from "./youtube";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 import { captionFor, savedCaptions, withCredit, CAPTION_MAX } from "./social/captions";
@@ -70,10 +72,11 @@ ui.get("/", async (c) => {
     source: c.req.query("source") ?? "",
     sort: c.req.query("sort") === "score" ? "score" : "",
   };
-  const [all, posts, sources] = await Promise.all([
+  const [all, posts, sources, metrics] = await Promise.all([
     db.listClips(c.env.DB, { review: f.review || undefined, source: f.source || undefined }),
     latestPosts(c.env.DB),
     db.listSources(c.env.DB),
+    allMetrics(c.env.DB),
   ]);
   let clips = f.notOn ? all.filter((cl) => platformStates(cl, posts.get(cl.id))[f.notOn as "youtube"].state !== "live" &&
     platformStates(cl, posts.get(cl.id))[f.notOn as "youtube"].state !== "drafted") : all;
@@ -88,7 +91,7 @@ ui.get("/", async (c) => {
         <a class="btn primary" href="/sources/new">+ New source</a>
       </div>
       <ClipToolbar f={f} sources={sources.filter((x) => (x.clip_count ?? 0) > 0).map((x) => x.id)} count={clips.length} />
-      <ClipGrid clips={clips} posts={posts}
+      <ClipGrid clips={clips} posts={posts} metrics={metrics}
         empty={all.length ? "No clips match these filters." : undefined} />
     </Layout>,
   );
@@ -200,8 +203,8 @@ ui.get("/sources/:id", async (c) => {
   if (!source) return c.notFound();
   const { jobs, error: batchError } = await syncBatch(c.env, [source]);
   // syncBatch may have just marked it failed, so read clips/events after it.
-  const [clips, events, posts] = await Promise.all([
-    db.listClips(c.env.DB, { source: id }), db.sourceEvents(c.env.DB, id), latestPosts(c.env.DB),
+  const [clips, events, posts, metrics] = await Promise.all([
+    db.listClips(c.env.DB, { source: id }), db.sourceEvents(c.env.DB, id), latestPosts(c.env.DB), allMetrics(c.env.DB),
   ]);
   const active = ACTIVE_STAGES.has(source.stage);
   let job = source.batch_job_id ? (jobs.get(source.batch_job_id) ?? null) : null;
@@ -238,7 +241,7 @@ ui.get("/sources/:id", async (c) => {
       {source.error ? <div class="err" style="margin-top:12px">{source.error}</div> : null}
       {source.stage === "failed" || source.stage === "partial" ? <RetryForm id={id} clips={clips.length || 5} /> : null}
       <h2>Clips <span class="muted" style="font-weight:400">{clips.length}</span></h2>
-      <ClipGrid clips={clips} posts={posts} empty={active ? "Clips appear here as they finish rendering." : "No clips were produced."} />
+      <ClipGrid clips={clips} posts={posts} metrics={metrics} empty={active ? "Clips appear here as they finish rendering." : "No clips were produced."} />
       <details class="fold" open={active || source.stage === "failed" ? true : undefined}>
         <summary>Logs {active ? <span class="pill warn">live</span> : null}</summary>
         <div class="body"><LogPanel lines={lines} error={logError} stream={stream} /></div>
@@ -276,11 +279,13 @@ ui.post("/sources/:id/retry", async (c) => {
 async function renderClip(c: Context<AppEnv>, id: string, flash?: string) {
   const clip = await db.getClip(c.env.DB, id);
   if (!clip) return c.notFound();
-  await advancePending(c.env, id).catch(() => {}); // the cron does this too; this just makes the page current
-  const [source, posts, accounts, siblings] = await Promise.all([
+  await advancePending(c.env, id, true).catch(() => {}); // the crons do this too; this just makes the page current
+  const [source, posts, accounts, siblings, metricsMap] = await Promise.all([
     db.getSource(c.env.DB, clip.source_id), clipPosts(c.env.DB, id), accountNames(c.env),
     c.env.DB.prepare("SELECT id FROM clips WHERE source_id = ? ORDER BY id").bind(clip.source_id).all<{ id: string }>(),
+    allMetrics(c.env.DB, id),
   ]);
+  const metrics = metricsMap.get(id);
   const credit = source?.credit ?? null;
   // TikTok requires showing the creator's own name and privacy options before a direct post.
   let creator: tiktok.CreatorInfo | null = null;
@@ -298,7 +303,7 @@ async function renderClip(c: Context<AppEnv>, id: string, flash?: string) {
   const at = ids.indexOf(id);
   // Open on the details while it's unreviewed, else on the first platform it isn't on yet.
   const defaultTab = clip.review === "pending" ? "details"
-    : (["youtube", "tiktok", "instagram"] as const).find((pf) => states[pf].state === "none") ?? "details";
+    : (["youtube", "tiktok", "instagram"] as const).find((pf) => states[pf].state === "none" || states[pf].state === "failed") ?? "details";
   return c.html(
     <Layout title={clip.title ?? id} email={c.get("email")} nav="clips" refresh={posts.some((p) => p.status === "processing")}>
       <ClipPage
@@ -306,17 +311,18 @@ async function renderClip(c: Context<AppEnv>, id: string, flash?: string) {
         credit={credit}
         flash={flash}
         states={states}
+        metrics={metrics}
         nav={{ prev: ids[at - 1], next: ids[at + 1], index: at + 1, total: ids.length }}
         defaultTab={defaultTab}
         panels={{
-          youtube: <YouTubePanel clip={clip} channel={accounts.youtube ?? null} credit={credit} />,
+          youtube: <YouTubePanel clip={clip} channel={accounts.youtube ?? null} credit={credit} stats={metrics?.youtube} />,
           tiktok: (
             <TikTokPanel clip={clip} account={accounts.tiktok} caption={captionFor("tiktok", clip, credit)}
-              posts={posts.filter((p) => p.platform === "tiktok")} creator={creator} creatorError={creatorError} />
+              posts={posts.filter((p) => p.platform === "tiktok")} creator={creator} creatorError={creatorError} stats={metrics?.tiktok} />
           ),
           instagram: (
             <InstagramPanel clip={clip} account={accounts.instagram} caption={captionFor("instagram", clip, credit)}
-              posts={posts.filter((p) => p.platform === "instagram")} />
+              posts={posts.filter((p) => p.platform === "instagram")} stats={metrics?.instagram} />
           ),
         }}
       />
@@ -382,6 +388,30 @@ ui.post("/clips/:id/social/:platform", async (c) => {
     await insertPost(c.env.DB, { clip_id: id, platform, mode, caption, privacy, status: "failed", error: msg.slice(0, 1000) });
     return back(`${platform === "tiktok" ? "TikTok" : "Instagram"} post failed: ${msg.slice(0, 300)}`);
   }
+});
+
+// ── Metrics
+ui.get("/metrics", async (c) => {
+  const [clips, metrics] = await Promise.all([db.listClips(c.env.DB, {}), allMetrics(c.env.DB)]);
+  return c.html(
+    <Layout title="Metrics" email={c.get("email")} nav="metrics">
+      <MetricsPage clips={clips} metrics={metrics} flash={c.req.query("flash")} />
+    </Layout>,
+  );
+});
+
+const refreshedMsg = (r: { updated: number; errors: string[] }) =>
+  r.errors.length ? `Stats refreshed with errors: ${r.errors.join("; ").slice(0, 300)}` : `Stats refreshed (${r.updated} updated)`;
+
+ui.post("/metrics/refresh", async (c) => {
+  const r = await refreshMetrics(c.env);
+  return c.redirect(`/metrics?flash=${encodeURIComponent(refreshedMsg(r))}`, 303);
+});
+
+ui.post("/clips/:id/metrics", async (c) => {
+  const id = c.req.param("id");
+  const r = await refreshMetrics(c.env, id);
+  return c.redirect(`/clips/${id}?flash=${encodeURIComponent(refreshedMsg(r))}`, 303);
 });
 
 // ── Connected accounts (OAuth). The callback is also behind Access: the browser carries the login.
@@ -499,7 +529,9 @@ app.route("/", ui);
 export default {
   fetch: app.fetch,
   // Every minute: finish TikTok/Instagram posts still processing.
-  async scheduled(_event, env, ctx) {
-    ctx.waitUntil(advancePending(env));
+  // Hourly: also notice TikTok drafts that were posted from the app, then refresh metrics.
+  async scheduled(event, env, ctx) {
+    if (event.cron === "5 * * * *") ctx.waitUntil(advancePending(env, undefined, true).then(() => refreshMetrics(env)).then(() => undefined));
+    else ctx.waitUntil(advancePending(env));
   },
 } satisfies ExportedHandler<Env>;

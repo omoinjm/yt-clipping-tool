@@ -5,7 +5,25 @@ import type { CreatorInfo } from "../social/tiktok";
 import type { AccountPlatform } from "../social/tokens";
 import { buildDescription } from "../youtube";
 import { PF } from "./Clips";
-import { Flash, Pill } from "./Layout";
+import { ago, Flash, Pill } from "./Layout";
+import type { MetricRow } from "../social/metrics";
+import { StatLine } from "./Metrics";
+
+/** Shown instead of the post form once the clip is live on a platform. */
+function LivePanel(props: { name: string; post: PostRow; stats?: MetricRow; refreshAction: string }) {
+  return (
+    <div class="panel" style="display:flex;flex-direction:column;gap:10px">
+      <div class="row">
+        <Pill v="published" label={`Live on ${props.name}`} />
+        <span class="muted small">since {ago(props.post.updated_at)}{props.post.privacy ? ` · ${PRIVACY_LABEL[props.post.privacy] ?? props.post.privacy}` : ""}</span>
+        {props.post.url ? <a class="btn sm right" href={props.post.url} target="_blank" rel="noopener">Open ↗</a> : null}
+      </div>
+      <StatLine m={props.stats} />
+      {props.post.caption ? <p class="muted small" style="white-space:pre-wrap;margin:0;border-top:1px solid var(--line);padding-top:10px">{props.post.caption}</p> : null}
+      <form method="post" action={props.refreshAction}><button class="sm ghost">Refresh stats</button></form>
+    </div>
+  );
+}
 
 const PRIVACY_LABEL: Record<string, string> = {
   PUBLIC_TO_EVERYONE: "Everyone",
@@ -113,15 +131,17 @@ const NotConnected = (p: { name: string }) => (
   <div class="empty">{p.name} isn't connected. <a href="/accounts">Connect it on Accounts</a>.</div>
 );
 
-export function YouTubePanel(props: { clip: ClipRow; channel: string | null; credit: string | null }) {
+export function YouTubePanel(props: { clip: ClipRow; channel: string | null; credit: string | null; stats?: MetricRow }) {
   const c = props.clip;
   if (c.youtube_id)
     return (
-      <div class="panel">
-        <p style="margin:0 0 10px">Uploaded as <code>{c.youtube_id}</code>. Publish or schedule it from YouTube Studio.</p>
+      <div class="panel" style="display:flex;flex-direction:column;gap:10px">
+        <div class="row"><Pill v="published" label="Uploaded to YouTube" /><StatLine m={props.stats} /></div>
+        <p style="margin:0">Video <code>{c.youtube_id}</code>. Publish or schedule it from YouTube Studio; stats count once it's public.</p>
         <div class="row">
           <a class="btn sm" href={`https://youtube.com/shorts/${c.youtube_id}`} target="_blank" rel="noopener">Open Short ↗</a>
           <a class="btn sm" href={`https://studio.youtube.com/video/${c.youtube_id}/edit`} target="_blank" rel="noopener">Open in Studio ↗</a>
+          <form method="post" action={`/clips/${c.id}/metrics`}><button class="sm ghost">Refresh stats</button></form>
         </div>
       </div>
     );
@@ -154,13 +174,22 @@ export function TikTokPanel(props: {
   posts: PostRow[];
   creator: CreatorInfo | null;
   creatorError?: string;
+  stats?: MetricRow;
 }) {
   const c = props.clip;
   if (!props.account) return <NotConnected name="TikTok" />;
   const busy = props.posts.some((x) => x.status === "processing");
+  const published = props.posts.find((x) => x.status === "published");
+  const draft = props.posts.find((x) => x.status === "drafted");
+  if (published)
+    return (
+      <>
+        <LivePanel name="TikTok" post={published} stats={props.stats} refreshAction={`/clips/${c.id}/metrics`} />
+        <PostHistory posts={props.posts} />
+      </>
+    );
   const tooLong = props.creator && c.duration && c.duration > props.creator.max_video_post_duration_sec;
-  return (
-    <>
+  const form = (
       <form class="stack" method="post" action={`/clips/${c.id}/social/tiktok`}>
         <p class="muted" style="margin:0">
           Posting as <b style="color:var(--text)">{props.creator ? `${props.creator.creator_nickname} (@${props.creator.creator_username})` : props.account}</b>
@@ -198,15 +227,37 @@ export function TikTokPanel(props: {
           By posting, you agree to TikTok's <a href="https://www.tiktok.com/legal/page/global/music-usage-confirmation/en" target="_blank" rel="noopener">Music Usage Confirmation</a>.
         </p>
       </form>
+  );
+  return (
+    <>
+      {draft ? (
+        <>
+          <div class="panel" style="display:flex;flex-direction:column;gap:10px">
+            <div class="row"><Pill v="drafted" /><span class="muted small">sent {ago(draft.created_at)}</span></div>
+            <p style="margin:0">Finish it in the TikTok app: <b>Inbox → System notifications</b>, then paste the caption. This page switches to “live” once TikTok reports it posted (checked hourly).</p>
+            <textarea id="cap-tiktok-draft" readonly style="min-height:80px">{props.caption.text}</textarea>
+            <div class="row"><button type="button" class="sm" data-copy="#cap-tiktok-draft">Copy caption</button></div>
+          </div>
+          <details class="fold"><summary>Send to TikTok again</summary><div class="body">{form}</div></details>
+        </>
+      ) : form}
       <PostHistory posts={props.posts} />
     </>
   );
 }
 
-export function InstagramPanel(props: { clip: ClipRow; account?: string; caption: Caption; posts: PostRow[] }) {
+export function InstagramPanel(props: { clip: ClipRow; account?: string; caption: Caption; posts: PostRow[]; stats?: MetricRow }) {
   const c = props.clip;
   if (!props.account) return <NotConnected name="Instagram" />;
   const busy = props.posts.some((x) => x.status === "processing");
+  const published = props.posts.find((x) => x.status === "published");
+  if (published)
+    return (
+      <>
+        <LivePanel name="Instagram" post={published} stats={props.stats} refreshAction={`/clips/${c.id}/metrics`} />
+        <PostHistory posts={props.posts} />
+      </>
+    );
   return (
     <>
       <form class="stack" method="post" action={`/clips/${c.id}/social/instagram`}>

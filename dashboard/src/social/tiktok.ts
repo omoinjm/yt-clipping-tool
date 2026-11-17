@@ -6,7 +6,8 @@
 import { getAccount, saveAccount, type Account } from "./tokens";
 
 const API = "https://open.tiktokapis.com";
-export const TIKTOK_SCOPES = "user.info.basic,video.publish,video.upload";
+// video.list: metrics (views/likes/comments/shares) for posted videos.
+export const TIKTOK_SCOPES = "user.info.basic,video.publish,video.upload,video.list";
 const MB = 1024 * 1024;
 
 export type CreatorInfo = {
@@ -188,4 +189,18 @@ export async function status(env: Env, publishId: string): Promise<TikTokStatus 
     /* fall back to a link without the handle */
   }
   return { ...s, postId: String(id), url: `https://www.tiktok.com/@${username}/video/${id}` };
+}
+
+/** Public stats for up to 20 posted videos. Needs the video.list scope (reconnect TikTok after adding it). */
+export async function videoStats(env: Env, ids: string[]): Promise<Map<string, import("../youtube").Stats>> {
+  const out = new Map<string, import("../youtube").Stats>();
+  if (!ids.length) return out;
+  const { token } = await accessToken(env);
+  type V = { id: string; view_count?: number; like_count?: number; comment_count?: number; share_count?: number };
+  const data = await call<{ videos: V[] }>(token, "/v2/video/query/?fields=id,view_count,like_count,comment_count,share_count", {
+    filters: { video_ids: ids.slice(0, 20) },
+  });
+  for (const v of data.videos ?? [])
+    out.set(String(v.id), { views: v.view_count, likes: v.like_count, comments: v.comment_count, shares: v.share_count });
+  return out;
 }

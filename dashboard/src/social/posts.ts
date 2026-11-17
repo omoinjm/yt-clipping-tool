@@ -54,8 +54,10 @@ async function advance(env: Env, p: PostRow): Promise<void> {
   try {
     if (p.platform === "tiktok") {
       const s = await tiktok.status(env, p.remote_id);
+      // A draft the creator discarded reports FAILED; keep it as a draft rather than flagging an error.
+      if (s.status === "FAILED" && p.status === "drafted") return;
       if (s.status === "FAILED") return updatePost(env.DB, p.id, { status: "failed", error: `TikTok: ${s.fail_reason ?? "failed"}` });
-      if (s.status === "SEND_TO_USER_INBOX") return updatePost(env.DB, p.id, { status: "drafted" });
+      if (s.status === "SEND_TO_USER_INBOX") return p.status === "drafted" ? undefined : updatePost(env.DB, p.id, { status: "drafted" });
       if (s.status === "PUBLISH_COMPLETE")
         return updatePost(env.DB, p.id, { status: "published", post_id: s.postId ?? null, url: s.url ?? null });
     } else {
@@ -63,19 +65,24 @@ async function advance(env: Env, p: PostRow): Promise<void> {
       if (r && r.ok) return updatePost(env.DB, p.id, { status: "published", post_id: r.postId, url: r.url });
       if (r && !r.ok) return updatePost(env.DB, p.id, { status: "failed", error: r.error });
     }
-    if (Date.now() - Date.parse(p.created_at.replace(" ", "T") + "Z") > STALE_MS)
+    if (p.status === "processing" && Date.now() - Date.parse(p.created_at.replace(" ", "T") + "Z") > STALE_MS)
       await updatePost(env.DB, p.id, { status: "failed", error: "Still processing after 2 hours; check the app directly" });
   } catch (err) {
-    // Transient API errors: keep polling, but surface the latest one.
-    await updatePost(env.DB, p.id, { error: String(err instanceof Error ? err.message : err).slice(0, 500) });
+    // Transient API errors: keep polling, but surface the latest one (not on drafts: they're fine as they are).
+    if (p.status === "processing") await updatePost(env.DB, p.id, { error: String(err instanceof Error ? err.message : err).slice(0, 500) });
   }
 }
 
-/** Poll every post still processing (cron each minute, and on clip page loads). */
-export async function advancePending(env: Env, clipId?: string): Promise<void> {
+/**
+ * Poll posts still processing (cron each minute, and on clip page loads). With `drafts`, also check TikTok
+ * drafts from the last 7 days: once the creator posts one from the app, it becomes published (hourly cron).
+ */
+export async function advancePending(env: Env, clipId?: string, drafts = false): Promise<void> {
+  const states = drafts ? "('processing', 'drafted')" : "('processing')";
+  const recent = "(status = 'processing' OR created_at > datetime('now', '-7 days'))";
   const q = clipId
-    ? env.DB.prepare("SELECT * FROM posts WHERE status = 'processing' AND clip_id = ?").bind(clipId)
-    : env.DB.prepare("SELECT * FROM posts WHERE status = 'processing' LIMIT 20");
+    ? env.DB.prepare(`SELECT * FROM posts WHERE status IN ${states} AND ${recent} AND clip_id = ?`).bind(clipId)
+    : env.DB.prepare(`SELECT * FROM posts WHERE status IN ${states} AND ${recent} ORDER BY id DESC LIMIT 25`);
   const { results } = await q.all<PostRow>();
   for (const p of results) await advance(env, p); // sequential: TikTok allows 30 status calls/min per token
 }

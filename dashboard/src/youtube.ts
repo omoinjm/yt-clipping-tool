@@ -78,6 +78,25 @@ async function accessToken(env: Env): Promise<string> {
   return t.access_token;
 }
 
+export type Stats = { views?: number; likes?: number; comments?: number; shares?: number; saves?: number };
+
+/** Statistics for up to 50 of the channel's videos (works for private videos too). */
+export async function videoStats(env: Env, ids: string[]): Promise<Map<string, Stats>> {
+  const out = new Map<string, Stats>();
+  if (!ids.length) return out;
+  const token = await accessToken(env);
+  const res = await fetch(`https://www.googleapis.com/youtube/v3/videos?part=statistics&id=${ids.slice(0, 50).join(",")}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) throw new Error(`YouTube videos.list: ${res.status} ${(await res.text()).slice(0, 200)}`);
+  type Item = { id: string; statistics: { viewCount?: string; likeCount?: string; commentCount?: string } };
+  for (const v of (await res.json<{ items?: Item[] }>()).items ?? []) {
+    const n = (x?: string) => (x == null ? undefined : Number(x));
+    out.set(v.id, { views: n(v.statistics.viewCount), likes: n(v.statistics.likeCount), comments: n(v.statistics.commentCount) });
+  }
+  return out;
+}
+
 /** Stream a clip from R2 into a YouTube resumable upload. Returns the YouTube video id. */
 export async function uploadToYouTube(
   env: Env,
