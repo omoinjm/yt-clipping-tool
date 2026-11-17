@@ -3,6 +3,7 @@ import type { ClipRow } from "../db";
 import type { PostRow } from "../social/posts";
 import type { Platform } from "../social/tokens";
 import { Flash, Pill } from "./Layout";
+import { Logo } from "./Logos";
 import { compact, total, type ClipMetrics } from "../social/metrics";
 import { StatLine } from "./Metrics";
 
@@ -40,7 +41,7 @@ export function platformStates(clip: ClipRow, latest?: Partial<Record<Platform, 
 }
 
 export const PfMark = (p: { pf: AnyPlatform; s: PState }) => (
-  <span class={`pf ${PF[p.pf].cls} ${p.s.state}`} title={`${PF[p.pf].name}: ${p.s.label}`}>{PF[p.pf].short}</span>
+  <span class={`pf ${p.s.state}`} title={`${PF[p.pf].name}: ${p.s.label}`}><Logo pf={p.pf} /></span>
 );
 
 export function ClipGrid(props: { clips: ClipRow[]; posts?: LatestPosts; metrics?: Map<string, ClipMetrics>; empty?: Child }) {
@@ -147,7 +148,7 @@ export function ClipPage(props: {
           <div class="row" style="margin-top:10px">
             {c.video_key ? <a class="btn sm" href={`/media/${c.video_key}?download=1`}>Download</a> : null}
             {(["youtube", "tiktok", "instagram"] as const).map((pf) =>
-              props.states[pf].url ? <a class="btn sm" href={props.states[pf].url} target="_blank" rel="noopener">{PF[pf].name} ↗</a> : null,
+              props.states[pf].url ? <a class="btn sm" href={props.states[pf].url} target="_blank" rel="noopener"><Logo pf={pf} /> {PF[pf].name} ↗</a> : null,
             )}
           </div>
         </div>
@@ -179,9 +180,9 @@ export function ClipPage(props: {
 
           <div class="tabs" role="tablist" data-tabs={props.defaultTab}>
             <button type="button" role="tab" data-tab="details">Details</button>
-            <button type="button" role="tab" data-tab="youtube">YouTube</button>
-            <button type="button" role="tab" data-tab="tiktok">TikTok</button>
-            <button type="button" role="tab" data-tab="instagram">Instagram</button>
+            {(["youtube", "tiktok", "instagram"] as const).map((pf) => (
+              <button type="button" role="tab" data-tab={pf}><Logo pf={pf} /> {PF[pf].name}</button>
+            ))}
           </div>
 
           <section data-panel="details">

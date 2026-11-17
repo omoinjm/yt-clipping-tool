@@ -6,6 +6,7 @@ import type { AccountPlatform } from "../social/tokens";
 import { buildDescription } from "../youtube";
 import { PF } from "./Clips";
 import { ago, Flash, Pill } from "./Layout";
+import { Logo } from "./Logos";
 import type { MetricRow } from "../social/metrics";
 import { StatLine } from "./Metrics";
 
@@ -57,7 +58,7 @@ export function AccountsPage(props: {
         {(["youtube", "tiktok", "instagram"] as const).map((p) => (
           <div class="panel row" style="justify-content:space-between;gap:16px">
             <div class="row" style="gap:12px;flex-wrap:nowrap;min-width:0">
-              <span class={`pf ${PF[p].cls} ${props.accounts[p] ? "live" : "none"}`} style="font-size:12px;padding:6px 9px">{PF[p].short}</span>
+              <span class={`pf lg ${props.accounts[p] ? "live" : "none"}`}><Logo pf={p} size={22} /></span>
               <div style="min-width:0">
                 <b>{PF[p].name}</b>
                 <div class="muted small">{HELP[p]}</div>
@@ -70,7 +71,8 @@ export function AccountsPage(props: {
               ) : props.accounts[p] ? (
                 <form method="post" action={`/accounts/${p}/disconnect`} class="row">
                   <a class="btn sm" href={`/oauth/${p}/start`}>Reconnect</a>
-                  <button class="sm danger ghost" type="submit" data-confirm={`Disconnect ${PF[p].name}?`}>Disconnect</button>
+                  <button class="sm danger ghost" type="submit" data-confirm-title={`Disconnect ${PF[p].name}?`} data-confirm-ok="Disconnect"
+                    data-confirm={`Clipper will stop posting to ${props.accounts[p]} and forget its login. You can connect again any time.`}>Disconnect</button>
                 </form>
               ) : (
                 <a class="btn primary sm" href={`/oauth/${p}/start`}>Connect {PF[p].name}</a>
@@ -266,7 +268,8 @@ export function InstagramPanel(props: { clip: ClipRow; account?: string; caption
         <label class="check"><input type="checkbox" name="share_to_feed" value="1" checked /> Also show in the profile grid</label>
         <div class="row">
           <button type="submit" name="action" value="post" class="primary" disabled={!c.video_key || busy}
-            data-confirm={`This publishes the Reel publicly on @${props.account} right away. Continue?`}>
+            data-confirm-title="Post to Instagram now?" data-confirm-ok="Post publicly"
+            data-confirm={`This Reel goes live publicly on @${props.account} right away. Instagram has no draft step, so check the caption first.`}>
             {busy ? "Posting…" : "Post to Instagram"}
           </button>
           <CaptionButtons custom={props.caption.custom} />

@@ -86,13 +86,25 @@ button:disabled{opacity:.45;cursor:not-allowed;filter:none}
 .toolbar select{width:auto;padding:6px 10px;font-size:13px}
 .score{font-variant-numeric:tabular-nums;font-weight:700}
 
-/* platform marks */
-.pf{display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:600;padding:2px 7px;border-radius:6px;background:var(--panel-2);color:var(--muted);letter-spacing:.02em}
-.pf.live{color:#fff}.pf.yt.live{background:var(--yt)}.pf.tt.live{background:#111;color:var(--tt);box-shadow:inset 0 0 0 1px #333}.pf.ig.live{background:linear-gradient(45deg,#f58529,#dd2a7b,#8134af)}
-.pf.drafted{color:var(--info);background:color-mix(in srgb,var(--info) 14%,transparent)}
-.pf.processing{color:var(--warn);background:color-mix(in srgb,var(--warn) 14%,transparent)}
-.pf.failed{color:var(--bad);background:color-mix(in srgb,var(--bad) 14%,transparent)}
-.pf.none{opacity:.55}
+/* platform marks: brand logo in a chip; the ring shows the state */
+.pf{display:inline-grid;place-items:center;width:26px;height:26px;border-radius:7px;background:var(--panel-2);color:var(--text);flex:none}
+.pf .logo{display:block}
+.pf.none .logo{filter:grayscale(1) brightness(1.5);opacity:.5}
+.pf.drafted{box-shadow:inset 0 0 0 1.5px var(--info)}
+.pf.processing{box-shadow:inset 0 0 0 1.5px var(--warn);animation:pulse 1.6s ease-in-out infinite}
+.pf.failed{box-shadow:inset 0 0 0 1.5px var(--bad)}.pf.failed .logo{opacity:.6}
+.pf.lg{width:40px;height:40px;border-radius:10px}
+.thumb .pf{background:rgb(0 0 0/.62);color:#fff;backdrop-filter:blur(4px)}
+
+/* dialog (replaces window.confirm) */
+dialog.modal{border:1px solid var(--line-2);border-radius:14px;background:var(--panel);color:var(--text);padding:0;width:min(420px,calc(100vw - 32px));box-shadow:0 20px 60px rgb(0 0 0/.45)}
+dialog.modal::backdrop{background:rgb(5 7 12/.62);backdrop-filter:blur(3px)}
+dialog.modal[open]{animation:pop .14s ease-out}
+dialog.modal .mb{padding:20px 20px 6px}
+dialog.modal h3{font-size:16px;margin:0 0 8px}
+dialog.modal p{margin:0;color:var(--muted);line-height:1.55}
+dialog.modal .mf{display:flex;justify-content:flex-end;gap:8px;padding:16px 20px 18px}
+@keyframes pop{from{opacity:0;transform:translateY(6px) scale(.98)}}
 
 /* clip grid */
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:16px}
@@ -191,8 +203,23 @@ document.querySelectorAll('[data-copy]').forEach(function(b){b.addEventListener(
   var el=document.querySelector(b.dataset.copy);var label=b.textContent;
   navigator.clipboard.writeText(el.value||el.textContent).then(function(){b.textContent='Copied ✓';setTimeout(function(){b.textContent=label},1600)});
 })});
-// Confirm before irreversible actions: button[data-confirm].
-document.querySelectorAll('[data-confirm]').forEach(function(b){b.addEventListener('click',function(e){if(!confirm(b.dataset.confirm))e.preventDefault()})});
+// Confirm before irreversible actions: button[data-confirm] (+ data-confirm-title, data-confirm-ok) in our own dialog.
+(function(){var d=document.getElementById('confirm');if(!d)return;var pending=null;
+  document.querySelectorAll('[data-confirm]').forEach(function(b){b.addEventListener('click',function(e){
+    if(b.dataset.confirmed){delete b.dataset.confirmed;return}
+    e.preventDefault();pending=b;
+    d.querySelector('h3').textContent=b.dataset.confirmTitle||'Are you sure?';
+    d.querySelector('p').textContent=b.dataset.confirm;
+    d.querySelector('[data-ok]').textContent=b.dataset.confirmOk||'Continue';
+    d.querySelector('[data-ok]').className=b.classList.contains('danger')?'danger':'primary';
+    d.showModal();d.querySelector('[data-ok]').focus();
+  })});
+  d.querySelector('[data-ok]').addEventListener('click',function(){d.close();if(!pending)return;
+    var b=pending;pending=null;b.dataset.confirmed='1';
+    if(b.form&&b.form.requestSubmit)b.form.requestSubmit(b);else b.click()});
+  d.querySelector('[data-cancel]').addEventListener('click',function(){pending=null;d.close()});
+  d.addEventListener('click',function(e){if(e.target===d){pending=null;d.close()}});
+})();
 // Show/hide by a radio group: [data-when="name=value"].
 document.querySelectorAll('[data-when]').forEach(function(el){
   var kv=el.dataset.when.split('='),form=el.closest('form');
@@ -253,6 +280,10 @@ export function Layout(props: { title: string; email: string; nav?: Nav; refresh
           </div>
         </header>
         <main>{props.children}</main>
+        <dialog class="modal" id="confirm" aria-labelledby="confirm-title">
+          <div class="mb"><h3 id="confirm-title">Are you sure?</h3><p /></div>
+          <div class="mf"><button type="button" data-cancel>Cancel</button><button type="button" class="primary" data-ok>Continue</button></div>
+        </dialog>
         <script>{raw(JS)}</script>
       </body>
     </html>

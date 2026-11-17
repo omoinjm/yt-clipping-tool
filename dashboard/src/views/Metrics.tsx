@@ -2,6 +2,7 @@ import type { ClipRow } from "../db";
 import { compact, total, type ClipMetrics, type MetricPlatform, type MetricRow } from "../social/metrics";
 import { PF } from "./Clips";
 import { ago, Flash } from "./Layout";
+import { Logo } from "./Logos";
 
 const PLATFORMS: MetricPlatform[] = ["youtube", "tiktok", "instagram"];
 
@@ -80,7 +81,7 @@ export function MetricsPage(props: { clips: ClipRow[]; metrics: Map<string, Clip
           <div class="status" style="margin-top:12px">
             {PLATFORMS.map((pf) => (
               <div class="tile">
-                <b class="row" style="gap:6px"><span class={`pf ${PF[pf].cls} ${live(pf) ? "live" : "none"}`}>{PF[pf].short}</span>{PF[pf].name}</b>
+                <b class="row" style="gap:6px"><span class={`pf ${live(pf) ? "live" : "none"}`}><Logo pf={pf} /></span>{PF[pf].name}</b>
                 <span style="font-size:18px;font-weight:700;font-variant-numeric:tabular-nums">{compact(sum("views", pf))} <span class="muted small" style="font-weight:400">views</span></span>
                 <span class="muted small">{compact(sum("likes", pf))} likes · {compact(sum("comments", pf))} comments · {live(pf)} live</span>
               </div>
@@ -99,7 +100,7 @@ export function MetricsPage(props: { clips: ClipRow[]; metrics: Map<string, Clip
               <thead>
                 <tr>
                   <th>Clip</th>
-                  {PLATFORMS.map((pf) => <th style="text-align:right">{PF[pf].short} views</th>)}
+                  {PLATFORMS.map((pf) => <th style="text-align:right"><span class="row" style="justify-content:flex-end;gap:5px"><Logo pf={pf} size={13} /> views</span></th>)}
                   <th style="min-width:160px">Total views</th>
                   <th style="text-align:right">Likes</th>
                   <th style="text-align:right">Comments</th>
