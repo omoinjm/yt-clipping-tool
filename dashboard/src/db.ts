@@ -12,6 +12,9 @@ export type ClipRow = {
   error: string | null; created_at: string; updated_at: string;
   captions: string; // JSON {tiktok?, instagram?}: user-written captions
   channel_id: string | null; // which channel it belongs to; null until assigned after clipping
+  header_style_id: string | null; // header style override (null = channel / global default)
+  render_key: string | null; // R2 prefix of saved re-render inputs (vertical video + props)
+  rendered_style: string | null; // hash of the header style + text the current video was rendered with
 };
 
 type Value = string | number | null;
@@ -19,7 +22,7 @@ type Value = string | number | null;
 const SOURCE_COLS = ["origin", "owner", "permission", "proof", "credit", "duration", "stage", "error", "batch_job_id"];
 const CLIP_UPDATE_COLS = [
   "stage", "review", "layout", "duration", "video_key", "thumb_key", "output_path", "youtube_id", "error",
-  "title", "description", "tags", "hook", "captions",
+  "title", "description", "tags", "hook", "captions", "header_style_id", "render_key", "rendered_style",
 ];
 
 /** Keep only whitelisted columns; serialize arrays (tags) to JSON. */

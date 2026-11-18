@@ -133,3 +133,12 @@ def publish_full(source_id: str, video: Path, thumb: Path) -> dict[str, str | in
         r2().upload_file(str(video), bucket, vkey, ExtraArgs={"ContentType": "video/mp4"})
     r2().upload_file(str(thumb), bucket, tkey, ExtraArgs={"ContentType": "image/jpeg"})
     return {"video_key": vkey, "thumb_key": tkey, "size": size}
+
+
+def publish_render_inputs(source_id: str, clip_id: str, vertical: Path, props: Path) -> str:
+    """Upload the reframed vertical video + render props so the header can be re-rendered on a CPU job."""
+    bucket = _env("R2_BUCKET")
+    prefix = f"render/{source_id}/{clip_id}/"
+    r2().upload_file(str(vertical), bucket, prefix + "vertical.mp4", ExtraArgs={"ContentType": "video/mp4"})
+    r2().upload_file(str(props), bucket, prefix + "props.json", ExtraArgs={"ContentType": "application/json"})
+    return prefix

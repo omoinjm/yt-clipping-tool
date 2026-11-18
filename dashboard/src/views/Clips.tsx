@@ -133,6 +133,7 @@ export function ClipPage(props: {
   states: Record<AnyPlatform, PState>;
   metrics?: ClipMetrics;
   channel: { current: ChannelRow | null; all: ChannelRow[]; locked: boolean };
+  header?: Child;
   nav: { prev?: string; next?: string; index: number; total: number };
   defaultTab: string;
   panels: { youtube: Child; tiktok: Child; instagram: Child };
@@ -200,6 +201,7 @@ export function ClipPage(props: {
           </div>
 
           <section data-panel="details">
+            {props.header}
             {c.reason ? <p class="callout" style="margin:0 0 16px"><b style="color:var(--text)">Why this moment:</b> {c.reason}</p> : null}
             <form class="stack" method="post" action={`/clips/${c.id}`}>
               <label>

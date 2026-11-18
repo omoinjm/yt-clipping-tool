@@ -23,6 +23,9 @@
     "AWS_REGION": "eu-west-1",
     "BATCH_JOB_QUEUE": "clipper-gpu",
     "BATCH_JOB_DEFINITION": "clipper",
+    // CPU re-renders (new header style on a finished clip): Fargate queue + job definition.
+    "BATCH_RENDER_QUEUE": "clipper-render",
+    "BATCH_RENDER_JOB_DEFINITION": "clipper-render",
     "R2_BUCKET_NAME": "clipper-clips"
   }
   // Secrets (scripts/sync-worker-secrets.sh from Infisical): ACCESS_TEAM_DOMAIN, ACCESS_AUD,

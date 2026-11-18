@@ -18,7 +18,9 @@ YouTube Shorts. A great Short:
 You will get a timestamped transcript ([start-end] speaker: text). Return the strongest \
 non-overlapping segments. Use only timestamps that appear in the transcript. Write the title, \
 hook text and description in the transcript's language. Hook text is a short on-screen caption \
-shown over the first seconds (max 8 words, no emojis). Titles max 70 characters, no clickbait \
+shown over the first seconds (max 8 words, no emojis); wrap the one or two words that carry the \
+punch in *asterisks* so the header can highlight them, e.g. "They sent you to *collect*? Really?". \
+Titles max 70 characters, no clickbait \
 the clip cannot deliver. Score honestly: 90+ only for genuinely viral-grade moments."""
 
 CANDIDATE_SCHEMA: dict[str, Any] = {

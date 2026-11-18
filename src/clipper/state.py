@@ -103,6 +103,13 @@ class ApiState:
         """Register/refresh the source's full long-form video (keys, size, duration, default metadata)."""
         self._call("PUT", f"/sources/{source_id}/longform", fields)
 
+    def header_style(self, clip_id: str) -> dict[str, Any] | None:
+        """{"style": HeaderStyle, "hash": str} the dashboard resolves for this clip (clip → channel → global default)."""
+        try:
+            return self._call("GET", f"/clips/{clip_id}/header-style")
+        except ApiError:
+            return None
+
     def yt_cookies(self) -> str | None:
         """YouTube cookies.txt saved in the dashboard (Settings), or None if none is set."""
         req = urllib.request.Request(self.base + "/settings/yt-cookies", headers=self.headers)

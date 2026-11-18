@@ -154,6 +154,25 @@ There's no hard cap in AWS, so the stack enforces one.
 - Only clip content you own or have written permission for. Re-uploading other people's videos risks copyright strikes and fails YouTube's "reused content" monetization policy. Captions, hooks and tight edits help, but they don't replace permission.
 - YouTube Partner Program for Shorts: 1,000 subscribers + 10M Shorts views in 90 days.
 
+## Clip headers (the "hook card")
+
+The header over the start of each clip is styled, not fixed. **Headers** in the dashboard lists six built-in presets:
+- Pop card
+- Podcast title bar (stays for the whole clip)
+- Bold outline
+- Black box + keyword
+- Tilted sticker
+- Minimal pill
+
+Copy any preset to customise it: font, weight, size, colours, outline, shadow, box shape (rounded, pill, full-width bar or none), box colour and opacity, corners, padding, border, tilt, width, position, entrance animation and time on screen. A live preview is drawn with the renderer's own CSS (`remotion/src/header.ts`, shared by Remotion and the dashboard), so it matches the video.
+
+- **Which style a clip gets:** the clip's own choice, else its channel's default (set on Channels), else the global default.
+- **Highlights:** wrap words in `*asterisks*` to highlight them. Claude now marks the punch words in the hooks it writes.
+- **Re-render:** the GPU job saves each clip's reframed video and word timings to R2 (`render/<source>/<clip>/`). Changing a clip's header and pressing **Save & re-render** runs a small **Fargate Spot** job (`Dockerfile.render`, `remotion/render-job.mjs`) that renders just that clip again in about 2–4 minutes, for well under a cent.
+  - The job holds no credentials: it reads a spec and writes its outputs through presigned R2 links.
+  - The new video replaces the old one when it's done (the every-minute cron watches the job).
+  - Clips made before this feature have no saved inputs; retry their source on the GPU instead.
+
 ## Full videos (long-form)
 
 Every processed source keeps its **full video** (the 1080p normalized copy) in R2 under `full/<source>/`. The GPU job publishes it right after download, and resumed runs don't upload it again. Full videos appear on **Videos** in the dashboard.

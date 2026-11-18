@@ -7,7 +7,7 @@
  * Instagram fetches the video itself from `video_url`: a short-lived presigned R2 link, so the
  * dashboard stays behind Cloudflare Access.
  */
-import { AwsClient } from "aws4fetch";
+import { presign } from "../r2";
 import { getAccount, saveAccount, type Account } from "./tokens";
 
 const GRAPH = "https://graph.facebook.com";
@@ -64,15 +64,6 @@ async function account(env: Env, ch: string): Promise<Account> {
   return acct;
 }
 
-/** Presigned GET for an R2 object via its S3 API (Instagram downloads the video from this). */
-async function presign(env: Env, key: string, seconds = 7200): Promise<string> {
-  if (!env.R2_ACCOUNT_ID || !env.R2_ACCESS_KEY_ID || !env.R2_SECRET_ACCESS_KEY)
-    throw new Error("R2_ACCOUNT_ID / R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY are not set on the Worker");
-  const r2 = new AwsClient({ accessKeyId: env.R2_ACCESS_KEY_ID, secretAccessKey: env.R2_SECRET_ACCESS_KEY, service: "s3", region: "auto" });
-  const url = new URL(`https://${env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com/${env.R2_BUCKET_NAME}/${key.split("/").map(encodeURIComponent).join("/")}`);
-  url.searchParams.set("X-Amz-Expires", String(seconds));
-  return (await r2.sign(url.toString(), { method: "GET", aws: { signQuery: true } })).url;
-}
 
 /** Create the Reel container. Returns its id; Instagram processes the video asynchronously. */
 export async function post(env: Env, ch: string, videoKey: string, caption: string, shareToFeed: boolean): Promise<string> {

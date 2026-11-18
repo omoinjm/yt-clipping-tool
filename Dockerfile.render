@@ -1,0 +1,21 @@
+# Clipper CPU re-render image (AWS Batch on Fargate): Remotion + Chrome Headless Shell + ffmpeg.
+# No CUDA, Python or models (~1 GB vs ~10 GB for the GPU image), so it starts fast on Fargate.
+FROM node:24.20.0-bookworm-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ffmpeg ca-certificates \
+      libnss3 libdbus-1-3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libgbm1 libasound2 \
+      libxrandr2 libxkbcommon0 libxfixes3 libxcomposite1 libxdamage1 libpango-1.0-0 libcairo2 \
+      fonts-noto-color-emoji \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app/remotion
+COPY remotion/package.json remotion/package-lock.json ./
+RUN npm ci --no-audit --no-fund && npx remotion browser ensure
+COPY remotion/tsconfig.json remotion/remotion.config.ts remotion/render-job.mjs ./
+COPY remotion/src ./src
+RUN mkdir -p public/clips && chown -R node:node /app/remotion/public
+
+USER node
+ENV REMOTION_CONCURRENCY=4
+CMD ["node", "render-job.mjs"]

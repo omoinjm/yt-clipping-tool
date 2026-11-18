@@ -150,9 +150,13 @@ def produce(
                 if dur < settings.min_clip_s:
                     log(f"  ! {r['id']} is {dur:.1f}s after tightening (below min)")
                 layout = reframe(body, cd / "vertical.mp4", cd)
+                # Header style resolved by the dashboard (cloud runs); local runs use the default preset.
+                hs = state.header_style(r["id"]) if hasattr(state, "header_style") else None
                 with timed(f"{r['id']} render ({layout})"):
-                    render(r["id"], cd / "vertical.mp4", words(t), r.get("hook") or "", final)
+                    render(r["id"], cd / "vertical.mp4", words(t), r.get("hook") or "", final, header=(hs or {}).get("style"))
             extra: dict[str, Any] = {"stage": "rendered", "output_path": str(final)}
+            if hs and hs.get("hash"):
+                extra["rendered_style"] = hs["hash"]
             if on_rendered:
                 extra = {**extra, **on_rendered(r, final)}
             state.update_clip(r["id"], duration=ffmpeg.duration(final), layout=layout, error=None, **extra)

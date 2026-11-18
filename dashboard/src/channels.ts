@@ -6,6 +6,7 @@ import type { ClipRow } from "./db";
 export type ChannelRow = {
   id: string; name: string; niche: string | null; hashtags: string; created_at: string; clip_count?: number;
   twitch_url: string | null; kick_url: string | null; // the channel's own pages, for uploading long-form by hand
+  header_style_id: string | null; // default header style for this channel's clips
 };
 
 export const CHANNEL_ID_RE = /^[a-z0-9][a-z0-9-]{1,40}$/;
@@ -40,17 +41,18 @@ export function cleanPageUrl(raw: string, host: "twitch.tv" | "kick.com"): strin
 
 export async function saveChannel(
   db: D1Database,
-  ch: { id: string; name: string; niche: string; hashtags: string; twitch_url?: string; kick_url?: string },
+  ch: { id: string; name: string; niche: string; hashtags: string; twitch_url?: string; kick_url?: string; header_style_id?: string },
   isNew: boolean,
 ) {
   const tw = cleanPageUrl(ch.twitch_url ?? "", "twitch.tv");
   const kk = cleanPageUrl(ch.kick_url ?? "", "kick.com");
+  const hs = ch.header_style_id || null;
   if (isNew)
-    await db.prepare("INSERT INTO channels (id, name, niche, hashtags, twitch_url, kick_url) VALUES (?, ?, ?, ?, ?, ?)")
-      .bind(ch.id, ch.name, ch.niche || null, normalizeHashtags(ch.hashtags), tw, kk).run();
+    await db.prepare("INSERT INTO channels (id, name, niche, hashtags, twitch_url, kick_url, header_style_id) VALUES (?, ?, ?, ?, ?, ?, ?)")
+      .bind(ch.id, ch.name, ch.niche || null, normalizeHashtags(ch.hashtags), tw, kk, hs).run();
   else
-    await db.prepare("UPDATE channels SET name = ?, niche = ?, hashtags = ?, twitch_url = ?, kick_url = ? WHERE id = ?")
-      .bind(ch.name, ch.niche || null, normalizeHashtags(ch.hashtags), tw, kk, ch.id).run();
+    await db.prepare("UPDATE channels SET name = ?, niche = ?, hashtags = ?, twitch_url = ?, kick_url = ?, header_style_id = ? WHERE id = ?")
+      .bind(ch.name, ch.niche || null, normalizeHashtags(ch.hashtags), tw, kk, hs, ch.id).run();
 }
 
 /** Delete a channel and its logins; its clips go back to unassigned (only allowed with nothing published). */

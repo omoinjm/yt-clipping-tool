@@ -25,6 +25,12 @@ import {
 } from "./longform";
 import { twitchConfigured } from "./social/twitch";
 import { LongformPage, VideoGrid } from "./views/Longform";
+import {
+  defaultStyleId, deleteStyle, getStyle, listStyles, parseStyle, resolveHeader, saveStyle, setDefaultStyle,
+} from "./headers";
+import { advanceRenderJobs, canRerender, latestRenderJob, startRerender } from "./rerender";
+import { ClipHeaderPanel, EditorPage, HeaderPreview, StylesPage } from "./views/Headers";
+import { normalizeHeader } from "../../remotion/src/header";
 import { uploadToYouTube } from "./youtube";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 import { captionFor, savedCaptions, withCredit, CAPTION_MAX } from "./social/captions";
@@ -90,6 +96,14 @@ api.put("/sources/:id/longform", async (c) => {
     tags: Array.isArray(b.tags) ? b.tags.map(String) : [],
   });
   return c.body(null, 204);
+});
+
+// Header style the GPU job renders a clip with (clip override → channel default → global default).
+api.get("/clips/:id/header-style", async (c) => {
+  const clip = await db.getClip(c.env.DB, c.req.param("id"));
+  if (!clip) return c.json({ error: "not found" }, 404);
+  const h = await resolveHeader(c.env.DB, clip);
+  return c.json({ style: h.style, hash: h.hash, id: h.row.id });
 });
 
 // YouTube download cookies for the GPU job (saved on the Settings page). Empty body = none set.
@@ -167,7 +181,7 @@ ui.get("/sources", async (c) => {
 
 // ── New source: form, chunked upload to R2, then queue the GPU job.
 ui.get("/sources/new", (c) =>
-  c.html(<Layout title="New source" email={c.get("email")} channels={c.get("channels")} scope={c.get("scope")} nav="new"><NewSourceForm /></Layout>),
+  c.html(<Layout title="New source" email={c.get("email")} channels={c.get("channels")} scope={c.get("scope")} nav="sources"><NewSourceForm /></Layout>),
 );
 
 ui.post("/sources/new", async (c) => {
@@ -190,7 +204,7 @@ ui.post("/sources/new", async (c) => {
     errors.push("The uploaded file wasn't found; upload it again.");
   if (errors.length) {
     return c.html(
-      <Layout title="New source" email={c.get("email")} channels={c.get("channels")} scope={c.get("scope")} nav="new"><NewSourceForm values={input} errors={errors} /></Layout>,
+      <Layout title="New source" email={c.get("email")} channels={c.get("channels")} scope={c.get("scope")} nav="sources"><NewSourceForm values={input} errors={errors} /></Layout>,
       400,
     );
   }
@@ -335,6 +349,9 @@ async function renderClip(c: Context<AppEnv>, id: string, flash?: string) {
   const clip = await db.getClip(c.env.DB, id);
   if (!clip) return c.notFound();
   await advancePending(c.env, id, true).catch(() => {}); // the crons do this too; this just makes the page current
+  const [header, styles, defId, renderJob, rerenderable] = await Promise.all([
+    resolveHeader(c.env.DB, clip), listStyles(c.env.DB), defaultStyleId(c.env.DB), latestRenderJob(c.env.DB, id), canRerender(c.env, clip),
+  ]);
   const [source, posts, accounts, siblings, metricsMap, channel, locked] = await Promise.all([
     db.getSource(c.env.DB, clip.source_id), clipPosts(c.env.DB, id), accountNames(c.env, clip.channel_id),
     c.env.DB.prepare("SELECT id FROM clips WHERE source_id = ? ORDER BY id").bind(clip.source_id).all<{ id: string }>(),
@@ -363,7 +380,8 @@ async function renderClip(c: Context<AppEnv>, id: string, flash?: string) {
   const defaultTab = clip.review === "pending" || !clip.channel_id ? "details"
     : (["youtube", "tiktok", "instagram"] as const).find((pf) => states[pf].state === "none" || states[pf].state === "failed") ?? "details";
   return c.html(
-    <Layout title={clip.title ?? id} email={c.get("email")} channels={c.get("channels")} scope={c.get("scope")} nav="clips" refresh={posts.some((p) => p.status === "processing")}>
+    <Layout title={clip.title ?? id} email={c.get("email")} channels={c.get("channels")} scope={c.get("scope")} nav="clips" fonts
+      refresh={posts.some((p) => p.status === "processing") || renderJob?.status === "running"}>
       <ClipPage
         clip={clip}
         credit={credit}
@@ -371,6 +389,11 @@ async function renderClip(c: Context<AppEnv>, id: string, flash?: string) {
         states={states}
         metrics={metrics}
         channel={{ current: channel, all: c.get("channels"), locked }}
+        header={
+          <ClipHeaderPanel clip={clip} resolved={header} styles={styles} job={renderJob} canRerender={rerenderable} posted={locked}
+            channelStyleName={channel?.header_style_id ? (styles.find((s) => s.id === channel.header_style_id)?.name ?? null) : null}
+            defaultName={styles.find((s) => s.id === defId)?.name ?? defId} />
+        }
         nav={{ prev: ids[at - 1], next: ids[at + 1], index: at + 1, total: ids.length }}
         defaultTab={defaultTab}
         panels={{
@@ -523,7 +546,7 @@ ui.get("/users", async (c) => {
     }
   }
   return c.html(
-    <Layout title="Users" email={c.get("email")} channels={c.get("channels")} scope={c.get("scope")} nav="users">
+    <Layout title="Users" email={c.get("email")} channels={c.get("channels")} scope={c.get("scope")} nav="settings">
       <UsersPage me={c.get("email")} users={users} error={error} configured={configured} flash={c.req.query("flash")} />
     </Layout>,
   );
@@ -739,6 +762,112 @@ ui.post("/settings/yt-cookies/delete", async (c) => {
   return c.redirect("/settings?flash=YouTube+cookies+removed", 303);
 });
 
+// ── Header styles (the clip "hook card")
+/** A real clip thumbnail to preview headers over, if any. */
+async function sampleBg(db: D1Database): Promise<string | null> {
+  const r = await db.prepare("SELECT thumb_key FROM clips WHERE thumb_key IS NOT NULL ORDER BY created_at DESC LIMIT 1").first<{ thumb_key: string }>();
+  return r ? `/media/${r.thumb_key}` : null;
+}
+
+ui.get("/headers", async (c) => {
+  const [styles, defId, bg] = await Promise.all([listStyles(c.env.DB), defaultStyleId(c.env.DB), sampleBg(c.env.DB)]);
+  return c.html(
+    <Layout title="Header styles" email={c.get("email")} channels={c.get("channels")} scope={c.get("scope")} nav="headers" fonts>
+      <StylesPage styles={styles} defaultId={defId} bg={bg} flash={c.req.query("flash")} />
+    </Layout>,
+  );
+});
+
+ui.get("/headers/preview", async (c) => {
+  const q = c.req.query();
+  const w = Math.min(600, Math.max(80, Number(q.w) || 320));
+  const bg = q.bg && q.bg.startsWith("/media/") ? q.bg : null;
+  let style;
+  if (q.font) style = normalizeHeader(q); // editor: style fields straight from the form
+  else if (q.clip) {
+    const clip = await db.getClip(c.env.DB, q.clip);
+    if (!clip) return c.notFound();
+    style = (await resolveHeader(c.env.DB, { ...clip, header_style_id: q.header_style_id || null })).style;
+  } else return c.text("bad preview request", 400);
+  return c.html(<HeaderPreview id={q.clip ? "hp-clip" : "hp-live"} style={style} text={q.text ?? ""} width={w} bg={bg} />);
+});
+
+async function renderEditor(c: Context<AppEnv>, row: Awaited<ReturnType<typeof getStyle>>, name: string, flash?: string) {
+  const bg = await sampleBg(c.env.DB);
+  let usedBy: string | undefined;
+  if (row && !row.builtin) {
+    const n = await c.env.DB.prepare(
+      "SELECT (SELECT COUNT(*) FROM channels WHERE header_style_id = ?) AS ch, (SELECT COUNT(*) FROM clips WHERE header_style_id = ?) AS cl",
+    ).bind(row.id, row.id).first<{ ch: number; cl: number }>();
+    if (n && (n.ch || n.cl)) usedBy = `Used by ${n.ch} channel(s) and ${n.cl} clip(s). Saving doesn't change videos already rendered; re-render them to apply.`;
+  }
+  return c.html(
+    <Layout title={name} email={c.get("email")} channels={c.get("channels")} scope={c.get("scope")} nav="headers" fonts>
+      <EditorPage row={row} style={row ? parseStyle(row) : normalizeHeader({})} name={name} bg={bg} flash={flash} usedBy={usedBy} />
+    </Layout>,
+  );
+}
+
+ui.get("/headers/new", async (c) => {
+  const from = c.req.query("from") ? await getStyle(c.env.DB, c.req.query("from")!) : null;
+  // Copy of a style: same settings, new custom style (built-ins themselves stay read-only).
+  return renderEditor(c, from ? { ...from, builtin: 1 } : null, from ? `${from.name} (copy)` : "My style");
+});
+
+ui.get("/headers/:id", async (c) => {
+  const row = await getStyle(c.env.DB, c.req.param("id"));
+  if (!row) return c.notFound();
+  if (row.builtin) return c.redirect(`/headers/new?from=${row.id}`, 302);
+  return renderEditor(c, row, row.name, c.req.query("flash"));
+});
+
+ui.post("/headers/save", async (c) => {
+  const f = await c.req.parseBody();
+  const fields = Object.fromEntries(Object.entries(f).map(([k, v]) => [k, String(v)]));
+  try {
+    const id = await saveStyle(c.env.DB, { id: f.as === "new" ? undefined : String(f.id || "") || undefined, name: String(f.name ?? ""), style: fields });
+    return c.redirect(`/headers/${id}?flash=${encodeURIComponent("Style saved")}`, 303);
+  } catch (err) {
+    return c.redirect(`/headers?flash=${encodeURIComponent(`Couldn't save: ${err instanceof Error ? err.message : String(err)}`)}`, 303);
+  }
+});
+
+ui.post("/headers/:id/default", async (c) => {
+  const row = await getStyle(c.env.DB, c.req.param("id"));
+  if (!row) return c.notFound();
+  await setDefaultStyle(c.env.DB, row.id);
+  return c.redirect(`/headers?flash=${encodeURIComponent(`“${row.name}” is now the default header`)}`, 303);
+});
+
+ui.post("/headers/:id/delete", async (c) => {
+  try {
+    await deleteStyle(c.env.DB, c.req.param("id"));
+    return c.redirect("/headers?flash=Style+deleted", 303);
+  } catch (err) {
+    return c.redirect(`/headers?flash=${encodeURIComponent(err instanceof Error ? err.message : String(err))}`, 303);
+  }
+});
+
+// Clip header: text + style, optionally re-rendered right away on the CPU render job.
+ui.post("/clips/:id/header", async (c) => {
+  const id = c.req.param("id");
+  const clip = await db.getClip(c.env.DB, id);
+  if (!clip) return c.notFound();
+  const f = await c.req.parseBody();
+  const back = (m: string) => c.redirect(`/clips/${id}?flash=${encodeURIComponent(m)}#details`, 303);
+  const hook = String(f.text ?? "").replace(/\s+/g, " ").trim().slice(0, 120);
+  const styleId = await validStyleId(c.env.DB, f.header_style_id);
+  await db.updateClip(c.env.DB, id, { hook, header_style_id: styleId || null });
+  if (f.then !== "render") return back("Header saved");
+  const fresh = (await db.getClip(c.env.DB, id))!;
+  try {
+    await startRerender(c.env, fresh, await resolveHeader(c.env.DB, fresh));
+    return back("Re-rendering with the new header (about 2–4 minutes)");
+  } catch (err) {
+    return back(`Re-render failed to start: ${err instanceof Error ? err.message : String(err)}`);
+  }
+});
+
 // ── Metrics
 ui.get("/metrics", async (c) => {
   const scope = c.get("scope");
@@ -775,6 +904,7 @@ ui.get("/channels", async (c) =>
   c.html(
     <Layout title="Channels" email={c.get("email")} channels={c.get("channels")} scope={c.get("scope")} nav="channels">
       <ChannelsPage
+        styles={await listStyles(c.env.DB)}
         channels={c.get("channels")}
         accounts={await allAccountNames(c.env)}
         configured={{
@@ -787,6 +917,12 @@ ui.get("/channels", async (c) =>
     </Layout>,
   ),
 );
+
+/** A header style id from a form, if it exists ("" = use the default). */
+async function validStyleId(db: D1Database, v: unknown): Promise<string> {
+  const id = String(v ?? "");
+  return id && (await getStyle(db, id)) ? id : "";
+}
 
 /** Mention page URLs that were dropped because they aren't a plain Twitch/Kick channel address. */
 const pageUrlWarning = (u: { twitch_url: string; kick_url: string }) => {
@@ -807,7 +943,7 @@ ui.post("/channels", async (c) => {
   if (!name) return channelBack(c, "Give the channel a name");
   if (!CHANNEL_ID_RE.test(id)) return channelBack(c, "Channel ID: 2–41 lowercase letters, digits or -");
   if (await getChannel(c.env.DB, id)) return channelBack(c, `A channel with ID “${id}” already exists`);
-  const urls = { twitch_url: String(f.twitch_url ?? ""), kick_url: String(f.kick_url ?? "") };
+  const urls = { twitch_url: String(f.twitch_url ?? ""), kick_url: String(f.kick_url ?? ""), header_style_id: await validStyleId(c.env.DB, f.header_style_id) };
   await saveChannel(c.env.DB, { id, name, niche: String(f.niche ?? "").trim().slice(0, 120), hashtags: String(f.hashtags ?? ""), ...urls }, true);
   return channelBack(c, `Channel “${name}” created. Connect its accounts below.${pageUrlWarning(urls)}`, id);
 });
@@ -817,7 +953,7 @@ ui.post("/channels/:id", async (c) => {
   if (!ch) return c.notFound();
   const f = await c.req.parseBody();
   const name = String(f.name ?? "").trim().slice(0, 60) || ch.name;
-  const urls = { twitch_url: String(f.twitch_url ?? ""), kick_url: String(f.kick_url ?? "") };
+  const urls = { twitch_url: String(f.twitch_url ?? ""), kick_url: String(f.kick_url ?? ""), header_style_id: await validStyleId(c.env.DB, f.header_style_id) };
   await saveChannel(c.env.DB, { id: ch.id, name, niche: String(f.niche ?? "").trim().slice(0, 120), hashtags: String(f.hashtags ?? ""), ...urls }, false);
   return channelBack(c, `Saved “${name}”${pageUrlWarning(urls)}`, ch.id);
 });
@@ -972,6 +1108,6 @@ export default {
         advancePending(env, undefined, true).then(() => refreshMetrics(env)),
         cleanupAbandoned(env),
       ]).then(() => undefined));
-    else ctx.waitUntil(Promise.all([advancePending(env), advanceYouTubeUploads(env)]).then(() => undefined));
+    else ctx.waitUntil(Promise.all([advancePending(env), advanceYouTubeUploads(env), advanceRenderJobs(env)]).then(() => undefined));
   },
 } satisfies ExportedHandler<Env>;

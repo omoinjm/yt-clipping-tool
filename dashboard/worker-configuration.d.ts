@@ -8,6 +8,8 @@ interface __BaseEnv_Env {
 	AWS_REGION: "eu-west-1";
 	BATCH_JOB_QUEUE: "clipper-gpu";
 	BATCH_JOB_DEFINITION: "clipper";
+	BATCH_RENDER_QUEUE: "clipper-render";
+	BATCH_RENDER_JOB_DEFINITION: "clipper-render";
 	R2_BUCKET_NAME: "clipper-clips";
 	INTERNAL_API_TOKEN: string;
 	YT_CLIENT_ID: string;

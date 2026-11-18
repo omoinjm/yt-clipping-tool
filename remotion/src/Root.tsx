@@ -7,7 +7,7 @@ const FPS = 30;
 const defaultProps: ShortClipProps = {
   src: "clips/sample.mp4",
   durationSec: 10,
-  hook: "This changes everything",
+  hook: "This changes *everything*",
   captions: [
     { text: " This", startMs: 0, endMs: 400, timestampMs: 0, confidence: 1 },
     { text: " is", startMs: 400, endMs: 600, timestampMs: 400, confidence: 1 },

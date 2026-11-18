@@ -59,8 +59,9 @@ export function SettingsPage(props: { cookies: CookieMeta | null; storage: Stora
       <div class="page-head">
         <div>
           <h1>Settings</h1>
-          <p class="sub" style="margin:4px 0 0">Settings for the clipping jobs.</p>
+          <p class="sub" style="margin:4px 0 0">Storage, download cookies and who can sign in.</p>
         </div>
+        <a class="btn" href="/users">Manage users →</a>
       </div>
       <Flash msg={props.flash} />
       <StorageMeter s={props.storage} />

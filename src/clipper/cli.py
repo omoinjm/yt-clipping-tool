@@ -203,6 +203,12 @@ def cloud_run(source_id: str) -> None:
         thumb = final.with_suffix(".jpg")
         ffmpeg.thumbnail(final, thumb, at=min(1.0, ffmpeg.duration(final) / 2))
         keys = storage.publish_clip(source_id, clip_row["id"], final, thumb)
+        # Keep what a CPU re-render needs (new header style without re-running the GPU steps).
+        try:
+            keys["render_key"] = storage.publish_render_inputs(
+                source_id, clip_row["id"], final.parent / "vertical.mp4", final.with_suffix(".props.json"))
+        except Exception as e:  # re-render then falls back to a GPU retry
+            pipeline.log(f"! could not keep re-render inputs for {clip_row['id']}: {e}")
         return {**keys, "stage": "published"}
 
     try:

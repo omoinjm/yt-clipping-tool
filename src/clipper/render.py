@@ -31,7 +31,9 @@ def to_captions(words: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return out
 
 
-def render(clip_id: str, video: Path, words: list[dict[str, Any]], hook: str, out: Path) -> None:
+def render(clip_id: str, video: Path, words: list[dict[str, Any]], hook: str, out: Path,
+           header: dict[str, Any] | None = None) -> None:
+    """Render the final Short. `header` is a HeaderStyle (remotion/src/header.ts); None = default preset."""
     rdir = settings.remotion_dir
     if not (rdir / "node_modules").exists():
         raise RuntimeError(f"run `npm install` in {rdir} first")
@@ -46,11 +48,25 @@ def render(clip_id: str, video: Path, words: list[dict[str, Any]], hook: str, ou
         "hook": hook,
         "captions": to_captions(words),
     }
+    if header:
+        props["header"] = header
     props_path = out.with_suffix(".props.json")
     props_path.write_text(json.dumps(props, ensure_ascii=False))
 
     try:
-        proc = subprocess.run(
+        # Two attempts: Google Fonts loading occasionally times out inside the headless browser.
+        for attempt in (1, 2):
+            proc = _remotion(rdir, out, props_path)
+            if proc.returncode == 0 or attempt == 2:
+                break
+        if proc.returncode != 0:
+            raise RuntimeError(f"remotion render failed:\n{(proc.stderr or proc.stdout)[-3000:]}")
+    finally:
+        public_clip.unlink(missing_ok=True)
+
+
+def _remotion(rdir: Path, out: Path, props_path: Path) -> subprocess.CompletedProcess:
+    return subprocess.run(
             [
                 "npx", "remotion", "render", "src/index.ts", "ShortClip", str(out.resolve()),
                 f"--props={props_path.resolve()}", "--codec=h264", "--crf=18",
@@ -58,7 +74,3 @@ def render(clip_id: str, video: Path, words: list[dict[str, Any]], hook: str, ou
             ],
             cwd=rdir, capture_output=True, text=True,
         )
-        if proc.returncode != 0:
-            raise RuntimeError(f"remotion render failed:\n{(proc.stderr or proc.stdout)[-3000:]}")
-    finally:
-        public_clip.unlink(missing_ok=True)

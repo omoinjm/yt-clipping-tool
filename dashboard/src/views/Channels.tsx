@@ -1,4 +1,5 @@
 import type { ChannelRow } from "../channels";
+import type { HeaderStyleRow } from "../headers";
 import type { AccountNames, AccountPlatform } from "../social/tokens";
 import { PF } from "./Clips";
 import { Flash, Pill } from "./Layout";
@@ -13,7 +14,7 @@ const HINT: Record<AccountPlatform, string> = {
   instagram: "The Instagram account must be Business/Creator, in the njmtech business portfolio, and an Instagram tester on the Meta app.",
 };
 
-function ChannelCard(props: { ch: ChannelRow; accounts: AccountNames; configured: Record<AccountPlatform, boolean> }) {
+function ChannelCard(props: { ch: ChannelRow; accounts: AccountNames; configured: Record<AccountPlatform, boolean>; styles: HeaderStyleRow[] }) {
   const { ch } = props;
   return (
     <section class="panel" id={`ch-${ch.id}`} style="display:flex;flex-direction:column;gap:14px">
@@ -81,6 +82,14 @@ function ChannelCard(props: { ch: ChannelRow; accounts: AccountNames; configured
             <input name="hashtags" value={ch.hashtags} placeholder="#gaming #gta6" />
             <span class="field-foot"><span>Added to this channel's auto captions after each clip's own hashtags (max 10).</span></span>
           </label>
+          <label>
+            Header style
+            <select name="header_style_id">
+              <option value="" selected={!ch.header_style_id}>Global default</option>
+              {props.styles.map((s) => <option value={s.id} selected={ch.header_style_id === s.id}>{s.name}</option>)}
+            </select>
+            <span class="field-foot"><span>The header this channel's clips render with (clips can override it). <a href="/headers">Manage styles</a></span></span>
+          </label>
           <div class="row" style="gap:12px;align-items:flex-start">
             <label style="flex:1;min-width:180px">
               <span class="row" style="gap:6px"><Logo pf="twitch" size={14} /> Twitch channel page <span style="font-weight:400">(optional)</span></span>
@@ -108,6 +117,7 @@ export function ChannelsPage(props: {
   channels: ChannelRow[];
   accounts: Map<string, AccountNames>;
   configured: Record<AccountPlatform, boolean>;
+  styles: HeaderStyleRow[];
   flash?: string;
 }) {
   return (
@@ -122,7 +132,7 @@ export function ChannelsPage(props: {
       </div>
       <Flash msg={props.flash} />
       <div class="src-list">
-        {props.channels.map((ch) => <ChannelCard ch={ch} accounts={props.accounts.get(ch.id) ?? {}} configured={props.configured} />)}
+        {props.channels.map((ch) => <ChannelCard ch={ch} accounts={props.accounts.get(ch.id) ?? {}} configured={props.configured} styles={props.styles} />)}
       </div>
 
       <h2>New channel</h2>
@@ -134,6 +144,14 @@ export function ChannelsPage(props: {
         <label>
           <span>Default hashtags <span style="font-weight:400">(optional)</span></span>
           <input name="hashtags" placeholder="#business #startups" />
+        </label>
+        <label>
+          Header style
+          <select name="header_style_id">
+            <option value="" selected>Global default</option>
+            {props.styles.map((s) => <option value={s.id}>{s.name}</option>)}
+          </select>
+          <span class="field-foot"><span>The header this channel's clips render with (clips can override it). <a href="/headers">Manage styles</a></span></span>
         </label>
           <div class="row" style="gap:12px;align-items:flex-start">
             <label style="flex:1;min-width:180px">

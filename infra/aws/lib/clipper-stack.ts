@@ -65,6 +65,14 @@ export class ClipperStack extends Stack {
       removalPolicy: RemovalPolicy.RETAIN,
     });
 
+    // Slim CPU image for header re-renders (Dockerfile.render): Remotion + Chrome + ffmpeg only.
+    const renderRepo = new ecr.Repository(this, "RenderRepo", {
+      repositoryName: "clipper-render",
+      imageScanOnPush: true,
+      lifecycleRules: [{ maxImageCount: 3 }],
+      removalPolicy: RemovalPolicy.RETAIN,
+    });
+
     const build = new codebuild.Project(this, "ImageBuild", {
       projectName: "clipper-image",
       source: codebuild.Source.s3({ bucket: work, path: "build/source.zip" }),
@@ -74,7 +82,7 @@ export class ClipperStack extends Stack {
         privileged: true,
       },
       timeout: Duration.hours(2),
-      environmentVariables: { REPO_URI: { value: repo.repositoryUri } },
+      environmentVariables: { REPO_URI: { value: repo.repositoryUri }, RENDER_REPO_URI: { value: renderRepo.repositoryUri } },
       buildSpec: codebuild.BuildSpec.fromObject({
         version: "0.2",
         phases: {
@@ -88,14 +96,22 @@ export class ClipperStack extends Stack {
             commands: [
               "docker pull $REPO_URI:latest || true",
               "docker build --cache-from $REPO_URI:latest -t $REPO_URI:latest -t $REPO_URI:$TAG .",
+              "docker pull $RENDER_REPO_URI:latest || true",
+              "docker build -f Dockerfile.render --cache-from $RENDER_REPO_URI:latest -t $RENDER_REPO_URI:latest -t $RENDER_REPO_URI:$TAG .",
             ],
           },
-          post_build: { commands: ["docker push $REPO_URI:$TAG", "docker push $REPO_URI:latest"] },
+          post_build: {
+            commands: [
+              "docker push $REPO_URI:$TAG", "docker push $REPO_URI:latest",
+              "docker push $RENDER_REPO_URI:$TAG", "docker push $RENDER_REPO_URI:latest",
+            ],
+          },
         },
       }),
       logging: { cloudWatch: { logGroup: new logs.LogGroup(this, "BuildLogs", { retention: logs.RetentionDays.ONE_MONTH }) } },
     });
     repo.grantPullPush(build);
+    renderRepo.grantPullPush(build);
 
     // ── Compute: GPU Spot instances that exist only while jobs run.
     const sg = new ec2.SecurityGroup(this, "BatchSg", { vpc, description: "Clipper batch (egress only)", allowAllOutbound: true });
@@ -187,6 +203,40 @@ export class ClipperStack extends Stack {
       ],
     });
 
+    // ── CPU re-renders (new header style on an already-clipped video): Fargate Spot, no GPU, starts in ~1 min.
+    // The job holds no credentials: everything comes from presigned R2 links in SPEC_URL (see render-job.mjs).
+    const renderEnv = new batch.FargateComputeEnvironment(this, "RenderFargate", {
+      vpc,
+      vpcSubnets: { subnetType: ec2.SubnetType.PUBLIC },
+      securityGroups: [sg],
+      spot: true,
+      maxvCpus: 16,
+    });
+    const renderQueue = new batch.JobQueue(this, "RenderQueue", {
+      jobQueueName: "clipper-render",
+      computeEnvironments: [{ computeEnvironment: renderEnv, order: 1 }],
+    });
+    new batch.EcsJobDefinition(this, "RenderJobDef", {
+      jobDefinitionName: "clipper-render",
+      container: new batch.EcsFargateContainerDefinition(this, "RenderContainer", {
+        image: ecs.ContainerImage.fromEcrRepository(renderRepo, "latest"),
+        cpu: 4,
+        memory: Size.gibibytes(8),
+        assignPublicIp: true, // no NAT: the task needs a public IP to reach ECR, R2 and Google Fonts
+        ephemeralStorageSize: Size.gibibytes(30),
+        logging: ecs.LogDriver.awsLogs({
+          streamPrefix: "render",
+          logGroup: new logs.LogGroup(this, "RenderLogs", { logGroupName: "/clipper/render", retention: logs.RetentionDays.ONE_MONTH }),
+        }),
+      }),
+      timeout: Duration.minutes(20),
+      retryAttempts: 2,
+      retryStrategies: [
+        batch.RetryStrategy.of(batch.Action.RETRY, batch.Reason.SPOT_INSTANCE_RECLAIMED),
+        batch.RetryStrategy.of(batch.Action.EXIT, batch.Reason.custom({ onExitCode: "*" })),
+      ],
+    });
+
     // ── Policy for whoever runs `clipper submit` (attach to your IAM user/role or SSO permission set).
     const submitPolicy = new iam.ManagedPolicy(this, "SubmitPolicy", {
       managedPolicyName: "ClipperSubmit",
@@ -256,6 +306,18 @@ export class ClipperStack extends Stack {
     dashboardUser.addToPolicy(new iam.PolicyStatement({ actions: ["batch:DescribeJobs"], resources: ["*"] }));
     dashboardUser.addToPolicy(
       new iam.PolicyStatement({
+        actions: ["batch:SubmitJob"],
+        resources: [renderQueue.jobQueueArn, `arn:aws:batch:${this.region}:${this.account}:job-definition/clipper-render*`],
+      }),
+    );
+    dashboardUser.addToPolicy(
+      new iam.PolicyStatement({
+        actions: ["logs:GetLogEvents"],
+        resources: [`arn:aws:logs:${this.region}:${this.account}:log-group:/clipper/render:log-stream:*`],
+      }),
+    );
+    dashboardUser.addToPolicy(
+      new iam.PolicyStatement({
         actions: ["logs:GetLogEvents"],
         resources: [`arn:aws:logs:${this.region}:${this.account}:log-group:/clipper/jobs:log-stream:*`],
       }),
@@ -266,6 +328,8 @@ export class ClipperStack extends Stack {
     new CfnOutput(this, "BuildProject", { value: build.projectName });
     new CfnOutput(this, "JobQueueName", { value: queue.jobQueueName });
     new CfnOutput(this, "JobDefinitionName", { value: "clipper" });
+    new CfnOutput(this, "RenderQueueName", { value: renderQueue.jobQueueName });
+    new CfnOutput(this, "RenderRepoUri", { value: renderRepo.repositoryUri });
     new CfnOutput(this, "JobRoleArn", { value: jobRole.roleArn });
     new CfnOutput(this, "SubmitPolicyArn", { value: submitPolicy.managedPolicyArn });
     void jobDef;

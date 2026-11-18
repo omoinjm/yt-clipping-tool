@@ -1,8 +1,9 @@
 import type { Child } from "hono/jsx";
 import { raw } from "hono/html";
 import type { ChannelRow } from "../channels";
+import { FONT_LINK, HEADER_CSS, PREVIEW_JS } from "./Headers";
 
-export type Nav = "clips" | "videos" | "sources" | "new" | "submissions" | "metrics" | "channels" | "users" | "settings";
+export type Nav = "clips" | "videos" | "sources" | "new" | "submissions" | "headers" | "metrics" | "channels" | "users" | "settings";
 
 const CSS = `
 :root{
@@ -256,17 +257,18 @@ const NAV: [Nav, string, string][] = [
   ["clips", "/", "Clips"],
   ["videos", "/videos", "Videos"],
   ["sources", "/sources", "Sources"],
-  ["new", "/sources/new", "New source"],
   ["submissions", "/submissions", "Submissions"],
+  ["headers", "/headers", "Headers"],
   ["metrics", "/metrics", "Metrics"],
   ["channels", "/channels", "Channels"],
-  ["users", "/users", "Users"],
   ["settings", "/settings", "Settings"],
 ];
 
 export function Layout(props: {
   title: string; email: string; nav?: Nav; refresh?: boolean; children: Child;
   channels?: ChannelRow[]; scope?: string;
+  /** Load the header fonts (pages that show header previews). */
+  fonts?: boolean;
 }) {
   return (
     <html lang="en">
@@ -283,7 +285,8 @@ export function Layout(props: {
         <meta name="apple-mobile-web-app-title" content="Clipper" />
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-        <style>{raw(CSS)}</style>
+        <style>{raw(CSS + HEADER_CSS)}</style>
+        {props.fonts ? FONT_LINK : null}
       </head>
       <body data-refresh={props.refresh ? "15" : undefined}>
         <header class="top">
@@ -313,7 +316,7 @@ export function Layout(props: {
           <div class="mb"><h3 id="confirm-title">Are you sure?</h3><p /></div>
           <div class="mf"><button type="button" data-cancel>Cancel</button><button type="button" class="primary" data-ok>Continue</button></div>
         </dialog>
-        <script>{raw(JS)}</script>
+        <script>{raw(JS + PREVIEW_JS)}</script>
       </body>
     </html>
   );
