@@ -3,7 +3,10 @@ import type { Context } from "hono";
 import { getCookie } from "hono/cookie";
 import type { ClipRow } from "./db";
 
-export type ChannelRow = { id: string; name: string; niche: string | null; hashtags: string; created_at: string; clip_count?: number };
+export type ChannelRow = {
+  id: string; name: string; niche: string | null; hashtags: string; created_at: string; clip_count?: number;
+  twitch_url: string | null; kick_url: string | null; // the channel's own pages, for uploading long-form by hand
+};
 
 export const CHANNEL_ID_RE = /^[a-z0-9][a-z0-9-]{1,40}$/;
 
@@ -29,13 +32,25 @@ export function normalizeHashtags(raw: string): string {
     .join(" ");
 }
 
-export async function saveChannel(db: D1Database, ch: { id: string; name: string; niche: string; hashtags: string }, isNew: boolean) {
+/** Only keep a plausible channel page URL on that site. */
+export function cleanPageUrl(raw: string, host: "twitch.tv" | "kick.com"): string | null {
+  const u = raw.trim();
+  return u && new RegExp(`^https://(www\\.)?${host.replace(".", "\\.")}/[\\w-]+/?$`, "i").test(u) ? u : null;
+}
+
+export async function saveChannel(
+  db: D1Database,
+  ch: { id: string; name: string; niche: string; hashtags: string; twitch_url?: string; kick_url?: string },
+  isNew: boolean,
+) {
+  const tw = cleanPageUrl(ch.twitch_url ?? "", "twitch.tv");
+  const kk = cleanPageUrl(ch.kick_url ?? "", "kick.com");
   if (isNew)
-    await db.prepare("INSERT INTO channels (id, name, niche, hashtags) VALUES (?, ?, ?, ?)")
-      .bind(ch.id, ch.name, ch.niche || null, normalizeHashtags(ch.hashtags)).run();
+    await db.prepare("INSERT INTO channels (id, name, niche, hashtags, twitch_url, kick_url) VALUES (?, ?, ?, ?, ?, ?)")
+      .bind(ch.id, ch.name, ch.niche || null, normalizeHashtags(ch.hashtags), tw, kk).run();
   else
-    await db.prepare("UPDATE channels SET name = ?, niche = ?, hashtags = ? WHERE id = ?")
-      .bind(ch.name, ch.niche || null, normalizeHashtags(ch.hashtags), ch.id).run();
+    await db.prepare("UPDATE channels SET name = ?, niche = ?, hashtags = ?, twitch_url = ?, kick_url = ? WHERE id = ?")
+      .bind(ch.name, ch.niche || null, normalizeHashtags(ch.hashtags), tw, kk, ch.id).run();
 }
 
 /** Delete a channel and its logins; its clips go back to unassigned (only allowed with nothing published). */
@@ -45,8 +60,13 @@ export async function deleteChannel(db: D1Database, id: string): Promise<string 
        (SELECT clip_id FROM posts WHERE status IN ('published', 'drafted', 'processing')))`,
   ).bind(id).first<{ n: number }>();
   if (live && live.n > 0) return `It has ${live.n} published clip(s); those stay tied to it.`;
+  const liveLong = await db.prepare(
+    `SELECT COUNT(*) AS n FROM longform WHERE channel_id = ? AND (yt_status IN ('uploading', 'uploaded') OR twitch_url IS NOT NULL OR kick_url IS NOT NULL)`,
+  ).bind(id).first<{ n: number }>();
+  if (liveLong && liveLong.n > 0) return `It has ${liveLong.n} published full video(s); those stay tied to it.`;
   await db.batch([
     db.prepare("UPDATE clips SET channel_id = NULL WHERE channel_id = ?").bind(id),
+    db.prepare("UPDATE longform SET channel_id = NULL WHERE channel_id = ?").bind(id),
     db.prepare("DELETE FROM oauth_tokens WHERE channel_id = ?").bind(id),
     db.prepare("DELETE FROM channels WHERE id = ?").bind(id),
   ]);

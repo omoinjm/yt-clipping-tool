@@ -2,7 +2,7 @@ import { Hono, type Context } from "hono";
 import { requireAccess, requireToken, type AppEnv } from "./auth";
 import * as db from "./db";
 import { ClipGrid, ClipPage, ClipToolbar, platformStates, type ClipFilter } from "./views/Clips";
-import { ACTIVE_STAGES, Layout, Pill } from "./views/Layout";
+import { ACTIVE_STAGES, Flash, Layout, Pill } from "./views/Layout";
 import { NewSourceForm } from "./views/NewSource";
 import { SourceList } from "./views/Sources";
 import { slugify, sourceKeyFor, validate, type NewSource, type Permission } from "./sources";
@@ -19,6 +19,12 @@ import { accessConfigured, addUser, listUsers, removeUser } from "./access";
 import { UsersPage } from "./views/Users";
 import { cookieMeta, deleteCookies, getCookies, inspectCookies, saveCookies } from "./ytcookies";
 import { SettingsPage } from "./views/Settings";
+import {
+  advanceYouTubeUploads, getLongform, listLongform, longformLocked, metricKey, parseKickUrl, parseTwitchUrl,
+  startYouTubeUpload, updateLongform, upsertLongform, type LongformRow,
+} from "./longform";
+import { twitchConfigured } from "./social/twitch";
+import { LongformPage, VideoGrid } from "./views/Longform";
 import { uploadToYouTube } from "./youtube";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 import { captionFor, savedCaptions, withCredit, CAPTION_MAX } from "./social/captions";
@@ -27,7 +33,7 @@ import { advancePending, clipPosts, insertPost, latestPosts } from "./social/pos
 import * as tiktok from "./social/tiktok";
 import { accountNames, allAccountNames, deleteAccount, type AccountPlatform, type Platform } from "./social/tokens";
 import {
-  assignClip, CHANNEL_ID_RE, clipLocked, currentScope, deleteChannel, getChannel, inScope, listChannels, saveChannel, SCOPE_COOKIE,
+  assignClip, CHANNEL_ID_RE, cleanPageUrl, clipLocked, currentScope, deleteChannel, getChannel, inScope, listChannels, saveChannel, SCOPE_COOKIE,
 } from "./channels";
 import { ChannelsPage } from "./views/Channels";
 import { InstagramPanel, TikTokPanel, YouTubePanel } from "./views/Social";
@@ -67,6 +73,22 @@ api.get("/clips", async (c) =>
 );
 api.patch("/clips/:id", async (c) => {
   await db.updateClip(c.env.DB, c.req.param("id"), await c.req.json());
+  return c.body(null, 204);
+});
+
+// Full long-form video kept by the GPU job (R2 full/<source>/). Keeps title/description edits made here.
+api.put("/sources/:id/longform", async (c) => {
+  const id = c.req.param("id");
+  if (!(await db.getSource(c.env.DB, id))) return c.json({ error: "unknown source" }, 404);
+  const b = await c.req.json<Record<string, unknown>>();
+  if (typeof b.video_key !== "string" || !b.video_key.startsWith(`full/${id}/`) || !(Number(b.size) > 0))
+    return c.json({ error: "video_key (full/<source>/…) and size required" }, 400);
+  await upsertLongform(c.env.DB, id, {
+    video_key: b.video_key, thumb_key: typeof b.thumb_key === "string" ? b.thumb_key : null, size: Number(b.size),
+    duration: Number(b.duration) || null, title: typeof b.title === "string" ? b.title.slice(0, 100) : null,
+    description: typeof b.description === "string" ? b.description.slice(0, 5000) : null,
+    tags: Array.isArray(b.tags) ? b.tags.map(String) : [],
+  });
   return c.body(null, 204);
 });
 
@@ -127,7 +149,7 @@ ui.get("/", async (c) => {
 });
 
 ui.get("/sources", async (c) => {
-  const sources = await db.listSources(c.env.DB);
+  const [sources, long] = await Promise.all([db.listSources(c.env.DB), listLongform(c.env.DB)]);
   const { jobs } = await syncBatch(c.env, sources); // also marks jobs that died silently as failed
   return c.html(
     <Layout title="Sources" email={c.get("email")} channels={c.get("channels")} scope={c.get("scope")} nav="sources" refresh={sources.some((s) => ACTIVE_STAGES.has(s.stage))}>
@@ -138,7 +160,7 @@ ui.get("/sources", async (c) => {
         </div>
         <a class="btn primary" href="/sources/new">+ New source</a>
       </div>
-      <SourceList sources={sources} jobs={jobs} />
+      <SourceList sources={sources} jobs={jobs} withFull={new Set(long.map((l) => l.source_id))} />
     </Layout>,
   );
 });
@@ -232,8 +254,9 @@ ui.get("/sources/:id", async (c) => {
   if (!source) return c.notFound();
   const { jobs, error: batchError } = await syncBatch(c.env, [source]);
   // syncBatch may have just marked it failed, so read clips/events after it.
-  const [clips, events, posts, metrics] = await Promise.all([
+  const [clips, events, posts, metrics, full] = await Promise.all([
     db.listClips(c.env.DB, { source: id }), db.sourceEvents(c.env.DB, id), latestPosts(c.env.DB), allMetrics(c.env.DB),
+    getLongform(c.env.DB, id),
   ]);
   const active = ACTIVE_STAGES.has(source.stage);
   let job = source.batch_job_id ? (jobs.get(source.batch_job_id) ?? null) : null;
@@ -264,7 +287,10 @@ ui.get("/sources/:id", async (c) => {
             {source.duration ? ` · ${Math.round(source.duration / 60)} min` : ""}
           </p>
         </div>
-        {/^https?:/.test(source.origin) ? <a class="btn sm" href={source.origin} target="_blank" rel="noopener">Original ↗</a> : null}
+        <div class="row">
+          {full ? <a class="btn sm primary" href={`/videos/${id}`}>Full video →</a> : null}
+          {/^https?:/.test(source.origin) ? <a class="btn sm" href={source.origin} target="_blank" rel="noopener">Original ↗</a> : null}
+        </div>
       </div>
       <ProgressPanel p={p} active={active} job={job} batchError={batchError} />
       {source.error ? <div class="err" style="margin-top:12px">{source.error}</div> : null}
@@ -527,14 +553,177 @@ ui.post("/users/remove", async (c) => {
   }
 });
 
-// ── Settings (YouTube download cookies)
-ui.get("/settings", async (c) =>
-  c.html(
-    <Layout title="Settings" email={c.get("email")} channels={c.get("channels")} scope={c.get("scope")} nav="settings">
-      <SettingsPage cookies={await cookieMeta(c.env.DB)} flash={c.req.query("flash")} />
+// ── Videos: full long-form videos, published per channel
+const longStats = (m: Map<string, Record<string, unknown>>, lfs: LongformRow[]) =>
+  new Map(lfs.map((lf) => [lf.source_id, (m.get(metricKey(lf.source_id)) ?? {}) as never]));
+
+ui.get("/videos", async (c) => {
+  const scope = c.get("scope");
+  const [all, metrics] = await Promise.all([listLongform(c.env.DB), allMetrics(c.env.DB)]);
+  const items = all.filter((lf) => inScope(scope, lf));
+  return c.html(
+    <Layout title="Videos" email={c.get("email")} channels={c.get("channels")} scope={scope} nav="videos">
+      <div class="page-head">
+        <div>
+          <h1>Videos</h1>
+          <p class="sub" style="margin:4px 0 0">Full long-form videos, kept for every processed source. Publish them to YouTube, Twitch and Kick.</p>
+        </div>
+      </div>
+      <Flash msg={c.req.query("flash")} />
+      <VideoGrid items={items} channels={c.get("channels")} showChannel={scope === ""} metrics={longStats(metrics as never, items)}
+        empty={all.length ? "No videos in this view." : "No full videos yet. They're kept automatically when a source finishes downloading."} />
     </Layout>,
-  ),
-);
+  );
+});
+
+async function renderVideo(c: Context<AppEnv>, id: string, flash?: string) {
+  const lf = await getLongform(c.env.DB, id);
+  if (!lf) return c.notFound();
+  const [source, channel, accounts, metrics] = await Promise.all([
+    db.getSource(c.env.DB, id),
+    lf.channel_id ? getChannel(c.env.DB, lf.channel_id) : Promise.resolve(null),
+    accountNames(c.env, lf.channel_id),
+    allMetrics(c.env.DB, metricKey(id)),
+  ]);
+  const st = { youtube: lf.yt_status ? 1 : 0, twitch: lf.twitch_url ? 1 : 0, kick: lf.kick_url ? 1 : 0 };
+  const defaultTab = !lf.channel_id ? "details" : (["youtube", "twitch", "kick"] as const).find((p) => !st[p]) ?? "details";
+  return c.html(
+    <Layout title={lf.title || id} email={c.get("email")} channels={c.get("channels")} scope={c.get("scope")} nav="videos"
+      refresh={lf.yt_status === "uploading"}>
+      <LongformPage lf={lf} credit={source?.credit ?? null} flash={flash} youtubeAccount={accounts.youtube ?? null}
+        twitchReady={twitchConfigured(c.env)} channel={{ current: channel, all: c.get("channels"), locked: longformLocked(lf) }}
+        stats={(metrics.get(metricKey(id)) ?? {}) as never} defaultTab={defaultTab} />
+    </Layout>,
+  );
+}
+
+ui.get("/videos/:id", (c) => renderVideo(c, c.req.param("id"), c.req.query("flash")));
+
+const videoBack = (c: Context<AppEnv>, id: string, msg: string, tab: string) =>
+  c.redirect(`/videos/${id}?flash=${encodeURIComponent(msg)}#${tab}`, 303);
+
+ui.post("/videos/:id", async (c) => {
+  const id = c.req.param("id");
+  if (!(await getLongform(c.env.DB, id))) return c.notFound();
+  const f = await c.req.parseBody();
+  await updateLongform(c.env.DB, id, {
+    title: String(f.title ?? "").trim().slice(0, 100) || null,
+    description: String(f.description ?? "").slice(0, 5000) || null,
+    tags: JSON.stringify(String(f.tags ?? "").split(",").map((t) => t.trim()).filter(Boolean).slice(0, 15)),
+  });
+  return videoBack(c, id, "Saved", "details");
+});
+
+ui.post("/videos/:id/channel", async (c) => {
+  const id = c.req.param("id");
+  const lf = await getLongform(c.env.DB, id);
+  if (!lf) return c.notFound();
+  if (longformLocked(lf)) return videoBack(c, id, "This video has already gone out on its channel, so it can't be moved", "details");
+  const v = String((await c.req.parseBody()).channel_id ?? "");
+  if (!v) {
+    await updateLongform(c.env.DB, id, { channel_id: null });
+    return videoBack(c, id, "Video unassigned", "details");
+  }
+  const ch = await getChannel(c.env.DB, v);
+  if (!ch) return videoBack(c, id, "That channel doesn't exist", "details");
+  await updateLongform(c.env.DB, id, { channel_id: ch.id });
+  return videoBack(c, id, `Assigned to ${ch.name}`, "details");
+});
+
+ui.post("/videos/:id/youtube", async (c) => {
+  const id = c.req.param("id");
+  const lf = await getLongform(c.env.DB, id);
+  if (!lf) return c.notFound();
+  if (lf.yt_status === "uploading" || lf.yt_status === "uploaded") return videoBack(c, id, "Already on YouTube", "youtube");
+  const form = await c.req.parseBody();
+  const privacy = (["private", "unlisted", "public"] as const).find((p) => p === form.privacy) ?? "private";
+  const source = await db.getSource(c.env.DB, id);
+  try {
+    await startYouTubeUpload(c.env, lf, privacy, source?.credit ?? null);
+    return videoBack(c, id, `Uploading to YouTube (${privacy}); it continues in the background`, "youtube");
+  } catch (err) {
+    return videoBack(c, id, `YouTube upload failed: ${err instanceof Error ? err.message : String(err)}`, "youtube");
+  }
+});
+
+ui.post("/videos/:id/link/:platform", async (c) => {
+  const id = c.req.param("id");
+  const p = c.req.param("platform");
+  const lf = await getLongform(c.env.DB, id);
+  if (!lf || (p !== "twitch" && p !== "kick")) return c.notFound();
+  const f = await c.req.parseBody();
+  const name = p === "twitch" ? "Twitch" : "Kick";
+  if (f.action === "remove") {
+    await updateLongform(c.env.DB, id, p === "twitch" ? { twitch_url: null, twitch_video_id: null } : { kick_url: null });
+    if (p === "twitch") await c.env.DB.prepare("DELETE FROM metrics WHERE clip_id = ? AND platform = 'twitch'").bind(metricKey(id)).run();
+    return videoBack(c, id, `${name} link removed`, p);
+  }
+  if (!lf.channel_id) return videoBack(c, id, "Assign the video to a channel first", "details");
+  const raw = String(f.url ?? "");
+  if (p === "twitch") {
+    const t = parseTwitchUrl(raw);
+    if (!t) return videoBack(c, id, "That isn't a Twitch video link (https://www.twitch.tv/videos/123…)", p);
+    await updateLongform(c.env.DB, id, { twitch_url: t.url, twitch_video_id: t.videoId });
+    const r = twitchConfigured(c.env) ? await refreshMetrics(c.env, metricKey(id)) : null;
+    return videoBack(c, id, r?.errors.length ? `Link saved; stats: ${r.errors[0]}` : "Twitch link saved", p);
+  }
+  const k = parseKickUrl(raw);
+  if (!k) return videoBack(c, id, "That isn't a Kick video link (https://kick.com/<channel>/videos/…)", p);
+  await updateLongform(c.env.DB, id, { kick_url: k });
+  return videoBack(c, id, "Kick link saved", p);
+});
+
+ui.post("/videos/:id/metrics", async (c) => {
+  const id = c.req.param("id");
+  const r = await refreshMetrics(c.env, metricKey(id));
+  return videoBack(c, id, refreshedMsg(r), (await getLongform(c.env.DB, id))?.twitch_url ? "twitch" : "youtube");
+});
+
+ui.post("/videos/:id/delete", async (c) => {
+  const id = c.req.param("id");
+  const lf = await getLongform(c.env.DB, id);
+  if (!lf) return c.notFound();
+  if (lf.yt_status === "uploading") return videoBack(c, id, "Wait for the YouTube upload to finish before deleting", "details");
+  await c.env.CLIPS.delete([lf.video_key, ...(lf.thumb_key ? [lf.thumb_key] : [])]);
+  await c.env.DB.batch([
+    c.env.DB.prepare("DELETE FROM longform WHERE source_id = ?").bind(id),
+    c.env.DB.prepare("DELETE FROM metrics WHERE clip_id = ?").bind(metricKey(id)),
+  ]);
+  return c.redirect(`/videos?flash=${encodeURIComponent("Full video deleted")}`, 303);
+});
+
+// ── Settings (YouTube download cookies)
+/** Bytes and count under an R2 prefix (paged listing; the bucket is small enough to sum on demand). */
+async function r2Usage(bucket: R2Bucket, prefix: string): Promise<{ bytes: number; count: number }> {
+  let bytes = 0;
+  let count = 0;
+  let cursor: string | undefined;
+  for (let page = 0; page < 50; page++) {
+    const r = await bucket.list({ prefix, cursor, limit: 1000 });
+    for (const o of r.objects) {
+      bytes += o.size;
+      count++;
+    }
+    if (!r.truncated) break;
+    cursor = r.cursor;
+  }
+  return { bytes, count };
+}
+
+ui.get("/settings", async (c) => {
+  const [cookies, full, clips, subs] = await Promise.all([
+    cookieMeta(c.env.DB),
+    c.env.DB.prepare("SELECT COALESCE(SUM(size), 0) AS bytes, COUNT(*) AS count FROM longform").first<{ bytes: number; count: number }>(),
+    r2Usage(c.env.CLIPS, "clips/"),
+    c.env.DB.prepare("SELECT COALESCE(SUM(size), 0) AS bytes, COUNT(*) AS count FROM submissions WHERE status = 'received'").first<{ bytes: number; count: number }>(),
+  ]);
+  return c.html(
+    <Layout title="Settings" email={c.get("email")} channels={c.get("channels")} scope={c.get("scope")} nav="settings">
+      <SettingsPage cookies={cookies} flash={c.req.query("flash")}
+        storage={{ full: full ?? { bytes: 0, count: 0 }, clips, submissions: subs ?? { bytes: 0, count: 0 } }} />
+    </Layout>,
+  );
+});
 
 ui.post("/settings/yt-cookies", async (c) => {
   const text = String((await c.req.parseBody()).cookies ?? "").trim();
@@ -553,12 +742,14 @@ ui.post("/settings/yt-cookies/delete", async (c) => {
 // ── Metrics
 ui.get("/metrics", async (c) => {
   const scope = c.get("scope");
-  const [all, metrics] = await Promise.all([db.listClips(c.env.DB, {}), allMetrics(c.env.DB)]);
+  const [all, allLong, metrics] = await Promise.all([db.listClips(c.env.DB, {}), listLongform(c.env.DB), allMetrics(c.env.DB)]);
   const clips = all.filter((cl) => inScope(scope, cl));
-  for (const id of [...metrics.keys()]) if (!clips.some((cl) => cl.id === id)) metrics.delete(id);
+  const long = allLong.filter((lf) => inScope(scope, lf));
+  const keep = new Set([...clips.map((cl) => cl.id), ...long.map((lf) => metricKey(lf.source_id))]);
+  for (const id of [...metrics.keys()]) if (!keep.has(id)) metrics.delete(id);
   return c.html(
     <Layout title="Metrics" email={c.get("email")} channels={c.get("channels")} scope={c.get("scope")} nav="metrics">
-      <MetricsPage clips={clips} metrics={metrics} flash={c.req.query("flash")} />
+      <MetricsPage clips={clips} long={long} metrics={metrics} flash={c.req.query("flash")} />
     </Layout>,
   );
 });
@@ -597,6 +788,15 @@ ui.get("/channels", async (c) =>
   ),
 );
 
+/** Mention page URLs that were dropped because they aren't a plain Twitch/Kick channel address. */
+const pageUrlWarning = (u: { twitch_url: string; kick_url: string }) => {
+  const bad = [
+    u.twitch_url.trim() && !cleanPageUrl(u.twitch_url, "twitch.tv") ? "Twitch" : null,
+    u.kick_url.trim() && !cleanPageUrl(u.kick_url, "kick.com") ? "Kick" : null,
+  ].filter(Boolean);
+  return bad.length ? ` (${bad.join(" and ")} page not saved: use e.g. https://www.twitch.tv/name)` : "";
+};
+
 const channelBack = (c: Context<AppEnv>, msg: string, anchor = "") =>
   c.redirect(`/channels?flash=${encodeURIComponent(msg)}${anchor ? `#ch-${anchor}` : ""}`, 303);
 
@@ -607,8 +807,9 @@ ui.post("/channels", async (c) => {
   if (!name) return channelBack(c, "Give the channel a name");
   if (!CHANNEL_ID_RE.test(id)) return channelBack(c, "Channel ID: 2–41 lowercase letters, digits or -");
   if (await getChannel(c.env.DB, id)) return channelBack(c, `A channel with ID “${id}” already exists`);
-  await saveChannel(c.env.DB, { id, name, niche: String(f.niche ?? "").trim().slice(0, 120), hashtags: String(f.hashtags ?? "") }, true);
-  return channelBack(c, `Channel “${name}” created. Connect its accounts below.`, id);
+  const urls = { twitch_url: String(f.twitch_url ?? ""), kick_url: String(f.kick_url ?? "") };
+  await saveChannel(c.env.DB, { id, name, niche: String(f.niche ?? "").trim().slice(0, 120), hashtags: String(f.hashtags ?? ""), ...urls }, true);
+  return channelBack(c, `Channel “${name}” created. Connect its accounts below.${pageUrlWarning(urls)}`, id);
 });
 
 ui.post("/channels/:id", async (c) => {
@@ -616,8 +817,9 @@ ui.post("/channels/:id", async (c) => {
   if (!ch) return c.notFound();
   const f = await c.req.parseBody();
   const name = String(f.name ?? "").trim().slice(0, 60) || ch.name;
-  await saveChannel(c.env.DB, { id: ch.id, name, niche: String(f.niche ?? "").trim().slice(0, 120), hashtags: String(f.hashtags ?? "") }, false);
-  return channelBack(c, `Saved “${name}”`, ch.id);
+  const urls = { twitch_url: String(f.twitch_url ?? ""), kick_url: String(f.kick_url ?? "") };
+  await saveChannel(c.env.DB, { id: ch.id, name, niche: String(f.niche ?? "").trim().slice(0, 120), hashtags: String(f.hashtags ?? ""), ...urls }, false);
+  return channelBack(c, `Saved “${name}”${pageUrlWarning(urls)}`, ch.id);
 });
 
 ui.post("/channels/:id/delete", async (c) => {
@@ -736,7 +938,7 @@ ui.post("/clips/:id/youtube", async (c) => {
 // Clip media from R2, with Range support so <video> can seek.
 ui.get("/media/*", async (c) => {
   const key = decodeURIComponent(c.req.path.slice("/media/".length));
-  if (!(key.startsWith("clips/") || key.startsWith("submissions/")) || key.includes("..")) return c.notFound();
+  if (!(key.startsWith("clips/") || key.startsWith("submissions/") || key.startsWith("full/")) || key.includes("..")) return c.notFound();
   const obj = await c.env.CLIPS.get(key, { range: c.req.raw.headers, onlyIf: c.req.raw.headers });
   if (obj === null) return c.notFound();
   const headers = new Headers();
@@ -770,6 +972,6 @@ export default {
         advancePending(env, undefined, true).then(() => refreshMetrics(env)),
         cleanupAbandoned(env),
       ]).then(() => undefined));
-    else ctx.waitUntil(advancePending(env));
+    else ctx.waitUntil(Promise.all([advancePending(env), advanceYouTubeUploads(env)]).then(() => undefined));
   },
 } satisfies ExportedHandler<Env>;

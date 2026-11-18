@@ -9,10 +9,13 @@ import { compact, total, type ClipMetrics } from "../social/metrics";
 import { StatLine } from "./Metrics";
 
 export type AnyPlatform = "youtube" | Platform;
+export type LongPlatform = "youtube" | "twitch" | "kick";
 export type PState = { state: "live" | "drafted" | "processing" | "failed" | "none"; label: string; url?: string };
 export type LatestPosts = Map<string, Partial<Record<Platform, PostRow>>>;
 
-export const PF: Record<AnyPlatform, { short: string; name: string; cls: string }> = {
+export const PF: Record<AnyPlatform | LongPlatform, { short: string; name: string; cls: string }> = {
+  twitch: { short: "TW", name: "Twitch", cls: "tw" },
+  kick: { short: "KK", name: "Kick", cls: "kk" },
   youtube: { short: "YT", name: "YouTube", cls: "yt" },
   tiktok: { short: "TT", name: "TikTok", cls: "tt" },
   instagram: { short: "IG", name: "Instagram", cls: "ig" },
@@ -172,7 +175,7 @@ export function ClipPage(props: {
             </span>
           </div>
 
-          <ChannelBox clipId={c.id} {...props.channel} />
+          <ChannelBox action={`/clips/${c.id}/channel`} what="clip" {...props.channel} />
 
           <div class="status">
             {(["youtube", "tiktok", "instagram"] as const).map((pf) => {
@@ -232,9 +235,9 @@ export function ClipPage(props: {
 }
 
 /** Which channel the clip belongs to. Unassigned clips get a picker; it locks once the clip has gone out. */
-function ChannelBox(props: { clipId: string; current: ChannelRow | null; all: ChannelRow[]; locked: boolean }) {
+export function ChannelBox(props: { action: string; what: string; current: ChannelRow | null; all: ChannelRow[]; locked: boolean }) {
   const picker = (label: string) => (
-    <form method="post" action={`/clips/${props.clipId}/channel`} class="row" style="flex-wrap:nowrap">
+    <form method="post" action={props.action} class="row" style="flex-wrap:nowrap">
       <select name="channel_id" style="width:auto;min-width:180px">
         <option value="" selected={!props.current}>— Unassigned —</option>
         {props.all.map((ch) => <option value={ch.id} selected={props.current?.id === ch.id}>{ch.name}{ch.niche ? ` · ${ch.niche}` : ""}</option>)}
@@ -245,7 +248,7 @@ function ChannelBox(props: { clipId: string; current: ChannelRow | null; all: Ch
   if (!props.current)
     return (
       <div class="callout" style="margin:16px 0 0;display:flex;flex-direction:column;gap:10px">
-        <span><b style="color:var(--text)">Not assigned to a channel yet.</b> Pick the channel this clip fits; it will then show and post only there.</span>
+        <span><b style="color:var(--text)">Not assigned to a channel yet.</b> Pick the channel this {props.what} fits; it will then show and post only there.</span>
         {props.all.length ? picker("Assign") : <span>No channels yet: <a href="/channels">create one</a>.</span>}
       </div>
     );

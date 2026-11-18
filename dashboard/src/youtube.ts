@@ -69,7 +69,7 @@ export async function connect(env: Env, ch: string, code: string, redirectUri: s
   return acct;
 }
 
-async function accessToken(env: Env, ch: string): Promise<string> {
+export async function accessToken(env: Env, ch: string): Promise<string> {
   const acct = await getAccount(env, ch, "youtube");
   if (!acct?.refreshToken) throw new Error("YouTube isn't connected for this channel: open Channels → Connect YouTube");
   if (acct.accessExpiresAt - Date.now() > 5 * 60_000) return acct.accessToken;

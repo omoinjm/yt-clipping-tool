@@ -24,6 +24,12 @@ function ChannelCard(props: { ch: ChannelRow; accounts: AccountNames; configured
             {ch.niche || "No niche set"} · {ch.clip_count ?? 0} clip{ch.clip_count === 1 ? "" : "s"}
             {ch.hashtags ? ` · adds ${ch.hashtags}` : ""}
           </div>
+          {ch.twitch_url || ch.kick_url ? (
+            <div class="row small" style="gap:10px;margin-top:4px">
+              {ch.twitch_url ? <a class="row" style="gap:4px" href={ch.twitch_url} target="_blank" rel="noopener"><Logo pf="twitch" size={13} /> Twitch</a> : null}
+              {ch.kick_url ? <a class="row" style="gap:4px" href={ch.kick_url} target="_blank" rel="noopener"><Logo pf="kick" size={13} /> Kick</a> : null}
+            </div>
+          ) : null}
         </div>
         <form method="post" action="/scope">
           <input type="hidden" name="scope" value={ch.id} />
@@ -75,6 +81,17 @@ function ChannelCard(props: { ch: ChannelRow; accounts: AccountNames; configured
             <input name="hashtags" value={ch.hashtags} placeholder="#gaming #gta6" />
             <span class="field-foot"><span>Added to this channel's auto captions after each clip's own hashtags (max 10).</span></span>
           </label>
+          <div class="row" style="gap:12px;align-items:flex-start">
+            <label style="flex:1;min-width:180px">
+              <span class="row" style="gap:6px"><Logo pf="twitch" size={14} /> Twitch channel page <span style="font-weight:400">(optional)</span></span>
+              <input name="twitch_url" value={ch.twitch_url ?? ""} placeholder="https://www.twitch.tv/yourchannel" />
+            </label>
+            <label style="flex:1;min-width:180px">
+              <span class="row" style="gap:6px"><Logo pf="kick" size={14} /> Kick channel page <span style="font-weight:400">(optional)</span></span>
+              <input name="kick_url" value={ch.kick_url ?? ""} placeholder="https://kick.com/yourchannel" />
+            </label>
+          </div>
+          <span class="muted small" style="margin-top:-6px">Long-form videos are uploaded to Twitch/Kick by hand; these give direct links on each video's page.</span>
           <div class="row">
             <button class="primary sm" type="submit">Save</button>
             <button class="sm danger ghost" type="submit" formaction={`/channels/${ch.id}/delete`} formnovalidate
@@ -118,6 +135,17 @@ export function ChannelsPage(props: {
           <span>Default hashtags <span style="font-weight:400">(optional)</span></span>
           <input name="hashtags" placeholder="#business #startups" />
         </label>
+          <div class="row" style="gap:12px;align-items:flex-start">
+            <label style="flex:1;min-width:180px">
+              <span class="row" style="gap:6px"><Logo pf="twitch" size={14} /> Twitch channel page <span style="font-weight:400">(optional)</span></span>
+              <input name="twitch_url" value={""} placeholder="https://www.twitch.tv/yourchannel" />
+            </label>
+            <label style="flex:1;min-width:180px">
+              <span class="row" style="gap:6px"><Logo pf="kick" size={14} /> Kick channel page <span style="font-weight:400">(optional)</span></span>
+              <input name="kick_url" value={""} placeholder="https://kick.com/yourchannel" />
+            </label>
+          </div>
+          <span class="muted small" style="margin-top:-6px">Long-form videos are uploaded to Twitch/Kick by hand; these give direct links on each video's page.</span>
         <div class="row"><button class="primary" type="submit">Create channel</button><span class="muted small">Then connect its accounts.</span></div>
       </form>
     </>

@@ -154,6 +154,18 @@ There's no hard cap in AWS, so the stack enforces one.
 - Only clip content you own or have written permission for. Re-uploading other people's videos risks copyright strikes and fails YouTube's "reused content" monetization policy. Captions, hooks and tight edits help, but they don't replace permission.
 - YouTube Partner Program for Shorts: 1,000 subscribers + 10M Shorts views in 90 days.
 
+## Full videos (long-form)
+
+Every processed source keeps its **full video** (the 1080p normalized copy) in R2 under `full/<source>/`. The GPU job publishes it right after download, and resumed runs don't upload it again. Full videos appear on **Videos** in the dashboard.
+
+- Like clips, a full video is assigned to a **channel**, and the channel locks once the video is published or linked.
+- **YouTube:** *Upload full video* starts a resumable upload. The every-minute cron then sends it in 128 MiB chunks, about 384 MB a minute, in the background, using the channel's YouTube login. Views come from the hourly stats refresh.
+- **Twitch and Kick** have no upload API, so these steps are by hand:
+  - Download the file, copy the title and description, and upload it on the platform. Each channel can store its Twitch/Kick page for direct links.
+  - Then paste the video's link back. **Twitch views are tracked** through Helix *Get Videos*, which needs `TWITCH_CLIENT_ID` and `TWITCH_CLIENT_SECRET` from a free dev.twitch.tv app (no OAuth needed). Kick is link-only.
+- **Metrics** shows Shorts and Long-form separately. **Settings** shows the storage used, at R2's $0.015/GB-month after the first 10 GB. Delete a full video from its page.
+- **Backfill** sources that finished before this feature, while their `work/` copy is still in S3 (30 days): `infisical run -- uv run clipper publish-full <source>`.
+
 ## YouTube downloads (cookies)
 
 YouTube often blocks downloads from AWS with "Sign in to confirm you're not a bot".

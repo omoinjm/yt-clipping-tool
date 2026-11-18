@@ -116,3 +116,20 @@ def publish_clip(source_id: str, clip_id: str, video: Path, thumb: Path) -> dict
     r2().upload_file(str(video), bucket, vkey, ExtraArgs={"ContentType": "video/mp4"})
     r2().upload_file(str(thumb), bucket, tkey, ExtraArgs={"ContentType": "image/jpeg"})
     return {"video_key": vkey, "thumb_key": tkey}
+
+
+def publish_full(source_id: str, video: Path, thumb: Path) -> dict[str, str | int]:
+    """Keep the full (1080p, normalized) long-form video in R2 under full/<source>/.
+    Idempotent: an object of the same size is already there on resumed runs, so it isn't re-uploaded."""
+    bucket = _env("R2_BUCKET")
+    vkey = f"full/{source_id}/full.mp4"
+    tkey = f"full/{source_id}/full.jpg"
+    size = video.stat().st_size
+    try:
+        existing = r2().head_object(Bucket=bucket, Key=vkey)["ContentLength"]
+    except Exception:
+        existing = None
+    if existing != size:
+        r2().upload_file(str(video), bucket, vkey, ExtraArgs={"ContentType": "video/mp4"})
+    r2().upload_file(str(thumb), bucket, tkey, ExtraArgs={"ContentType": "image/jpeg"})
+    return {"video_key": vkey, "thumb_key": tkey, "size": size}

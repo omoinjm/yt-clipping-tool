@@ -1,10 +1,10 @@
 import type { ClipRow } from "../db";
+import type { LongformRow } from "../longform";
 import { compact, total, type ClipMetrics, type MetricPlatform, type MetricRow } from "../social/metrics";
 import { PF } from "./Clips";
 import { ago, Flash } from "./Layout";
 import { Logo } from "./Logos";
 
-const PLATFORMS: MetricPlatform[] = ["youtube", "tiktok", "instagram"];
 
 /** "1.2K views · 34 likes · 5 comments" for one platform. */
 export function StatLine(props: { m?: MetricRow }) {
@@ -35,37 +35,27 @@ function hints(rows: MetricRow[]): string[] {
   return [...out];
 }
 
-export function MetricsPage(props: { clips: ClipRow[]; metrics: Map<string, ClipMetrics>; flash?: string }) {
-  const rows = [...props.metrics.values()].flatMap((m) => Object.values(m) as MetricRow[]);
+type Ranked = { id: string; title: string; thumb: string | null; href: string; m: ClipMetrics };
+
+/** One block of the Metrics page: totals, per-platform tiles and a ranked list. */
+function Section(props: { title: string; platforms: MetricPlatform[]; items: Ranked[]; empty: string; wide?: boolean }) {
+  const rows = props.items.flatMap((i) => Object.values(i.m) as MetricRow[]);
   // undefined (shown as "—") when no post reports that number, so missing data never reads as zero.
   const sum = (k: "views" | "likes" | "comments" | "shares", pf?: MetricPlatform) => {
     const vals = rows.filter((r) => !pf || r.platform === pf).map((r) => r[k]).filter((v): v is number => typeof v === "number");
     return vals.length ? vals.reduce((a, b) => a + b, 0) : undefined;
   };
   const live = (pf?: MetricPlatform) => rows.filter((r) => !pf || r.platform === pf).length;
-  const lastFetch = rows.map((r) => r.fetched_at).sort().at(-1);
-  const ranked = props.clips
-    .filter((c) => props.metrics.has(c.id))
-    .map((c) => ({ c, m: props.metrics.get(c.id)!, views: total(props.metrics.get(c.id), "views") ?? 0 }))
+  const ranked = props.items
+    .map((i) => ({ ...i, views: total(i.m, "views") ?? 0 }))
     .sort((a, b) => b.views - a.views || (total(b.m, "likes") ?? 0) - (total(a.m, "likes") ?? 0));
   const maxViews = Math.max(1, ...ranked.map((r) => r.views));
   const notes = hints(rows);
-
   return (
     <>
-      <div class="page-head">
-        <div>
-          <h1>Metrics</h1>
-          <p class="sub" style="margin:4px 0 0">
-            Performance of published clips. Refreshed hourly{lastFetch ? `, last ${ago(lastFetch)}` : ""}.
-          </p>
-        </div>
-        <form method="post" action="/metrics/refresh"><button class="sm">Refresh now</button></form>
-      </div>
-      <Flash msg={props.flash} />
-
+      <h2 style="font-size:17px;margin-top:30px">{props.title}</h2>
       {rows.length === 0 ? (
-        <div class="empty">No published clips yet. Stats appear here once a clip is live on YouTube, TikTok or Instagram.</div>
+        <div class="empty">{props.empty}</div>
       ) : (
         <>
           <section class="panel">
@@ -77,9 +67,8 @@ export function MetricsPage(props: { clips: ClipRow[]; metrics: Map<string, Clip
               <div><small>Live posts</small><strong>{live()}</strong></div>
             </div>
           </section>
-
           <div class="status" style="margin-top:12px">
-            {PLATFORMS.map((pf) => (
+            {props.platforms.map((pf) => (
               <div class="tile">
                 <b class="row" style="gap:6px"><span class={`pf ${live(pf) ? "live" : "none"}`}><Logo pf={pf} /></span>{PF[pf].name}</b>
                 <span style="font-size:18px;font-weight:700;font-variant-numeric:tabular-nums">{compact(sum("views", pf))} <span class="muted small" style="font-weight:400">views</span></span>
@@ -87,47 +76,39 @@ export function MetricsPage(props: { clips: ClipRow[]; metrics: Map<string, Clip
               </div>
             ))}
           </div>
-
-          {notes.length ? (
-            <div class="callout" style="margin:12px 0">
-              {notes.map((n) => <div>{n}</div>)}
-            </div>
-          ) : null}
-
-          <h2>Top clips</h2>
-          <div class="table" style="overflow-x:auto">
+          {notes.length ? <div class="callout" style="margin:12px 0">{notes.map((n) => <div>{n}</div>)}</div> : null}
+          <div class="table" style="overflow-x:auto;margin-top:12px">
             <table>
               <thead>
                 <tr>
-                  <th>Clip</th>
-                  {PLATFORMS.map((pf) => <th style="text-align:right"><span class="row" style="justify-content:flex-end;gap:5px"><Logo pf={pf} size={13} /> views</span></th>)}
+                  <th>{props.wide ? "Video" : "Clip"}</th>
+                  {props.platforms.map((pf) => <th style="text-align:right"><span class="row" style="justify-content:flex-end;gap:5px"><Logo pf={pf} size={13} /> views</span></th>)}
                   <th style="min-width:160px">Total views</th>
                   <th style="text-align:right">Likes</th>
                   <th style="text-align:right">Comments</th>
                 </tr>
               </thead>
               <tbody>
-                {ranked.map(({ c, m, views }) => (
+                {ranked.map((r) => (
                   <tr>
                     <td>
-                      <a href={`/clips/${c.id}`} class="row" style="gap:10px;flex-wrap:nowrap;text-decoration:none">
-                        {c.thumb_key ? <img src={`/media/${c.thumb_key}`} alt="" loading="lazy" style="width:30px;height:53px;object-fit:cover;border-radius:5px;background:#000" /> : null}
-                        <span style="font-weight:500">{c.title ?? c.id}</span>
+                      <a href={r.href} class="row" style="gap:10px;flex-wrap:nowrap;text-decoration:none">
+                        {r.thumb ? <img src={`/media/${r.thumb}`} alt="" loading="lazy"
+                          style={props.wide ? "width:64px;height:36px;object-fit:cover;border-radius:5px;background:#000" : "width:30px;height:53px;object-fit:cover;border-radius:5px;background:#000"} /> : null}
+                        <span style="font-weight:500">{r.title}</span>
                       </a>
                     </td>
-                    {PLATFORMS.map((pf) => (
-                      <td style="text-align:right;font-variant-numeric:tabular-nums" class={m[pf] ? undefined : "muted"}>
-                        {m[pf] ? compact(m[pf]!.views) : "—"}
-                      </td>
+                    {props.platforms.map((pf) => (
+                      <td style="text-align:right;font-variant-numeric:tabular-nums" class={r.m[pf] ? undefined : "muted"}>{r.m[pf] ? compact(r.m[pf]!.views) : "—"}</td>
                     ))}
                     <td>
                       <div class="row" style="gap:10px;flex-wrap:nowrap">
-                        <div class="bar grow"><i style={`width:${Math.round((views / maxViews) * 100)}%`} /></div>
-                        <span style="font-variant-numeric:tabular-nums;font-weight:600;min-width:44px;text-align:right">{compact(views)}</span>
+                        <div class="bar grow"><i style={`width:${Math.round((r.views / maxViews) * 100)}%`} /></div>
+                        <span style="font-variant-numeric:tabular-nums;font-weight:600;min-width:44px;text-align:right">{compact(r.views)}</span>
                       </div>
                     </td>
-                    <td style="text-align:right;font-variant-numeric:tabular-nums">{compact(total(m, "likes"))}</td>
-                    <td style="text-align:right;font-variant-numeric:tabular-nums">{compact(total(m, "comments"))}</td>
+                    <td style="text-align:right;font-variant-numeric:tabular-nums">{compact(total(r.m, "likes"))}</td>
+                    <td style="text-align:right;font-variant-numeric:tabular-nums">{compact(total(r.m, "comments"))}</td>
                   </tr>
                 ))}
               </tbody>
@@ -135,6 +116,32 @@ export function MetricsPage(props: { clips: ClipRow[]; metrics: Map<string, Clip
           </div>
         </>
       )}
+    </>
+  );
+}
+
+export function MetricsPage(props: {
+  clips: ClipRow[]; long: LongformRow[]; metrics: Map<string, ClipMetrics>; flash?: string;
+}) {
+  const lastFetch = [...props.metrics.values()].flatMap((m) => Object.values(m) as MetricRow[]).map((r) => r.fetched_at).sort().at(-1);
+  const shorts: Ranked[] = props.clips.filter((c) => props.metrics.has(c.id))
+    .map((c) => ({ id: c.id, title: c.title ?? c.id, thumb: c.thumb_key, href: `/clips/${c.id}`, m: props.metrics.get(c.id)! }));
+  const long: Ranked[] = props.long.filter((l) => props.metrics.has(`full:${l.source_id}`))
+    .map((l) => ({ id: l.source_id, title: l.title || l.source_id, thumb: l.thumb_key, href: `/videos/${l.source_id}`, m: props.metrics.get(`full:${l.source_id}`)! }));
+  return (
+    <>
+      <div class="page-head">
+        <div>
+          <h1>Metrics</h1>
+          <p class="sub" style="margin:4px 0 0">Shorts and full videos. Refreshed hourly{lastFetch ? `, last ${ago(lastFetch)}` : ""}.</p>
+        </div>
+        <form method="post" action="/metrics/refresh"><button class="sm">Refresh now</button></form>
+      </div>
+      <Flash msg={props.flash} />
+      <Section title="Shorts" platforms={["youtube", "tiktok", "instagram"]} items={shorts}
+        empty="No published clips yet. Stats appear once a clip is live on YouTube, TikTok or Instagram." />
+      <Section title="Long-form" platforms={["youtube", "twitch"]} items={long} wide
+        empty="No full videos published yet. Upload one to YouTube or link it on Twitch from the Videos page." />
     </>
   );
 }

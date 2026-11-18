@@ -2,6 +2,7 @@ import { raw } from "hono/html";
 import type { CookieMeta } from "../ytcookies";
 import { ago, Flash, Pill } from "./Layout";
 import { Logo } from "./Logos";
+import { fmtBytes } from "../submissions";
 
 const FILE_JS = `
 document.getElementById('ck-file').addEventListener('change',function(e){
@@ -16,7 +17,41 @@ function expiry(meta: CookieMeta): { text: string; tone: string } {
   return { text: `login cookies expire in ${days} day${days === 1 ? "" : "s"}`, tone: days < 14 ? "warn" : "ok" };
 }
 
-export function SettingsPage(props: { cookies: CookieMeta | null; flash?: string }) {
+export type Storage = { full: { bytes: number; count: number }; clips: { bytes: number; count: number }; submissions: { bytes: number; count: number } };
+
+/** Cloudflare R2: first 10 GB free, then $0.015 per GB-month (no download fees). */
+function StorageMeter(props: { s: Storage }) {
+  const { s } = props;
+  const total = s.full.bytes + s.clips.bytes + s.submissions.bytes;
+  const gb = total / 1024 ** 3;
+  const cost = Math.max(0, gb - 10) * 0.015;
+  const row = (label: string, v: { bytes: number; count: number }, unit: string, href?: string) => (
+    <tr>
+      <td>{href ? <a href={href}>{label}</a> : label}</td>
+      <td class="muted">{v.count} {unit}{v.count === 1 ? "" : "s"}</td>
+      <td style="text-align:right;font-variant-numeric:tabular-nums">{fmtBytes(v.bytes)}</td>
+      <td style="width:35%"><div class="bar"><i style={`width:${total ? Math.max(1, Math.round((v.bytes / total) * 100)) : 0}%`} /></div></td>
+    </tr>
+  );
+  return (
+    <section class="panel" style="display:flex;flex-direction:column;gap:12px">
+      <div class="row" style="justify-content:space-between">
+        <b>Storage</b>
+        <span class="muted small">{fmtBytes(total)} · {cost > 0 ? `≈ $${cost.toFixed(2)}/month` : "within R2's free 10 GB"}</span>
+      </div>
+      <table>
+        <tbody>
+          {row("Full videos", s.full, "video", "/videos")}
+          {row("Clips", s.clips, "file")}
+          {row("Uploads waiting for review", s.submissions, "upload", "/submissions")}
+        </tbody>
+      </table>
+      <p class="muted small" style="margin:0">Delete a full video from its page on Videos. Source uploads expire after 30 days on their own.</p>
+    </section>
+  );
+}
+
+export function SettingsPage(props: { cookies: CookieMeta | null; storage: Storage; flash?: string }) {
   const m = props.cookies;
   const exp = m ? expiry(m) : null;
   return (
@@ -28,8 +63,9 @@ export function SettingsPage(props: { cookies: CookieMeta | null; flash?: string
         </div>
       </div>
       <Flash msg={props.flash} />
+      <StorageMeter s={props.storage} />
 
-      <section class="panel" style="display:flex;flex-direction:column;gap:14px">
+      <section class="panel" style="display:flex;flex-direction:column;gap:14px;margin-top:12px">
         <div class="row" style="justify-content:space-between">
           <b class="row" style="gap:8px"><Logo pf="youtube" size={18} /> YouTube download cookies</b>
           {m ? <Pill v={exp?.tone === "bad" ? "failed" : "published"} label={exp?.tone === "bad" ? "expired" : "saved"} /> : <Pill v="none" label="not set" />}

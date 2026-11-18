@@ -2,7 +2,7 @@ import type { Child } from "hono/jsx";
 import { raw } from "hono/html";
 import type { ChannelRow } from "../channels";
 
-export type Nav = "clips" | "sources" | "new" | "submissions" | "metrics" | "channels" | "users" | "settings";
+export type Nav = "clips" | "videos" | "sources" | "new" | "submissions" | "metrics" | "channels" | "users" | "settings";
 
 const CSS = `
 :root{
@@ -125,6 +125,12 @@ dialog.modal .mf{display:flex;justify-content:flex-end;gap:8px;padding:16px 20px
 .chip{display:inline-block;font-size:11.5px;font-weight:600;padding:2px 8px;border-radius:6px;background:var(--panel-2);color:var(--text);white-space:nowrap;max-width:140px;overflow:hidden;text-overflow:ellipsis}
 .chip.dim{color:var(--muted);font-weight:500}.chip.strong{font-size:13px;padding:4px 10px;box-shadow:inset 0 0 0 1px var(--line-2)}
 details.inline summary{cursor:pointer;list-style:none;text-decoration:underline dotted}details.inline summary::-webkit-details-marker{display:none}
+.grid.wide{grid-template-columns:repeat(auto-fill,minmax(280px,1fr))}
+@media (max-width:520px){.grid.wide{grid-template-columns:1fr}}
+.thumb.wide{aspect-ratio:16/9}
+video.player.wide{aspect-ratio:16/9;max-height:62vh;width:100%;background:#000;border-radius:var(--radius);display:block}
+ol.steps-list{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:16px}
+ol.steps-list>li::marker{color:var(--muted);font-weight:600}
 .empty{border:1px dashed var(--line-2);border-radius:var(--radius);padding:28px;text-align:center;color:var(--muted)}
 
 /* clip page */
@@ -248,6 +254,7 @@ document.querySelectorAll('pre.logs').forEach(function(l){l.scrollTop=l.scrollHe
 
 const NAV: [Nav, string, string][] = [
   ["clips", "/", "Clips"],
+  ["videos", "/videos", "Videos"],
   ["sources", "/sources", "Sources"],
   ["new", "/sources/new", "New source"],
   ["submissions", "/submissions", "Submissions"],

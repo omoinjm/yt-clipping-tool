@@ -18,6 +18,9 @@ TURNSTILE_SECRET_KEY=
 CF_API_TOKEN=
 CF_ACCOUNT_ID=
 CF_ACCESS_GROUP_ID=
+# Twitch app (client credentials) to read view counts of linked long-form videos
+TWITCH_CLIENT_ID=
+TWITCH_CLIENT_SECRET=
 R2_ACCOUNT_ID=
 R2_ACCESS_KEY_ID=
 R2_SECRET_ACCESS_KEY=

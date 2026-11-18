@@ -99,6 +99,10 @@ class ApiState:
     def update_clip(self, clip_id: str, **fields: Any) -> None:
         self._call("PATCH", f"/clips/{clip_id}", fields)
 
+    def put_longform(self, source_id: str, **fields: Any) -> None:
+        """Register/refresh the source's full long-form video (keys, size, duration, default metadata)."""
+        self._call("PUT", f"/sources/{source_id}/longform", fields)
+
     def yt_cookies(self) -> str | None:
         """YouTube cookies.txt saved in the dashboard (Settings), or None if none is set."""
         req = urllib.request.Request(self.base + "/settings/yt-cookies", headers=self.headers)

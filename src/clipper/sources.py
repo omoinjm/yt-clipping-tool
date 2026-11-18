@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 from dataclasses import dataclass
@@ -118,4 +119,8 @@ def _download(src: Source, opts: dict) -> Path:
                     f"{meta.get('license') or 'Standard YouTube License'!r}; get permission or pick another video"
                 )
         info = ydl.extract_info(src.url, download=True)
-        return Path(ydl.prepare_filename(info)).with_suffix(".mp4")
+        out = Path(ydl.prepare_filename(info)).with_suffix(".mp4")
+        # Title/description/tags become the defaults for publishing the full long-form video.
+        meta = {k: info.get(k) for k in ("title", "description", "tags", "uploader", "webpage_url", "duration")}
+        (out.parent / "source_meta.json").write_text(json.dumps(meta, ensure_ascii=False))
+        return out

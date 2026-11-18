@@ -2,8 +2,9 @@
 import * as instagram from "./instagram";
 import * as tiktok from "./tiktok";
 import { videoStats as youtubeStats, type Stats } from "../youtube";
+import * as twitch from "./twitch";
 
-export type MetricPlatform = "youtube" | "tiktok" | "instagram";
+export type MetricPlatform = "youtube" | "tiktok" | "instagram" | "twitch";
 export type MetricRow = Stats & { clip_id: string; platform: MetricPlatform; error: string | null; fetched_at: string };
 export type ClipMetrics = Partial<Record<MetricPlatform, MetricRow>>;
 
@@ -102,6 +103,36 @@ export async function refreshMetrics(env: Env, clipId?: string): Promise<{ updat
       fail("instagram", [r], err);
     }
   }
+  // Long-form (metrics key "full:<source>"): YouTube via the channel's login, Twitch via the app token.
+  const longSql = `SELECT 'full:' || source_id AS clip_id, channel_id, yt_video_id, twitch_video_id FROM longform
+    WHERE (yt_status = 'uploaded' AND yt_video_id IS NOT NULL AND channel_id IS NOT NULL) OR twitch_video_id IS NOT NULL`;
+  const longAll = (await db.prepare(longSql).all<{ clip_id: string; channel_id: string | null; yt_video_id: string | null; twitch_video_id: string | null }>()).results
+    .filter((r) => !clipId || r.clip_id === clipId);
+  const ytLong = longAll.filter((r) => r.yt_video_id && r.channel_id).map((r) => ({ clip_id: r.clip_id, channel_id: r.channel_id!, post_id: r.yt_video_id! }));
+  for (const [ch, all] of byChannel(ytLong)) for (const rows of chunk(all, 50)) {
+    try {
+      const stats = await youtubeStats(env, ch, rows.map((r) => r.post_id));
+      for (const r of rows) {
+        const s = stats.get(r.post_id);
+        stmts.push(s ? saveStmt(db, r.clip_id, "youtube", s) : errorStmt(db, r.clip_id, "youtube", "Video not found (deleted?)"));
+      }
+    } catch (err) {
+      fail("youtube", rows, err);
+    }
+  }
+  const tw = longAll.filter((r) => r.twitch_video_id);
+  for (const rows of chunk(tw, 100)) {
+    try {
+      const stats = await twitch.videoStats(env, rows.map((r) => r.twitch_video_id!));
+      for (const r of rows) {
+        const s = stats.get(r.twitch_video_id!);
+        stmts.push(s ? saveStmt(db, r.clip_id, "twitch", s) : errorStmt(db, r.clip_id, "twitch", "Video not found (deleted, or not public yet?)"));
+      }
+    } catch (err) {
+      fail("twitch", rows, err);
+    }
+  }
+
   if (stmts.length) await db.batch(stmts);
   return { updated: stmts.length, errors: [...new Set(errors)] };
 }

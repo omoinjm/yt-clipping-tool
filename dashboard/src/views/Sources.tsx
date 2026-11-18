@@ -9,7 +9,7 @@ const STAGE_PCT: Record<string, number> = {
 };
 const PERMISSION: Record<string, string> = { own: "own", granted: "permission", cc_by: "CC BY" };
 
-export function SourceList(props: { sources: SourceRow[]; jobs?: Map<string, BatchJob> }) {
+export function SourceList(props: { sources: SourceRow[]; jobs?: Map<string, BatchJob>; withFull?: Set<string> }) {
   if (props.sources.length === 0)
     return <div class="empty">No sources yet. <a href="/sources/new">Add your first video</a>.</div>;
   return (
@@ -21,7 +21,7 @@ export function SourceList(props: { sources: SourceRow[]; jobs?: Map<string, Bat
         return (
           <a class="src" href={`/sources/${s.id}`}>
             <div style="min-width:0">
-              <div class="name">{s.id}</div>
+              <div class="name">{s.id}{props.withFull?.has(s.id) ? <span class="chip" style="margin-left:8px;vertical-align:1px">Full video</span> : null}</div>
               <div class="muted small">{s.owner} · {PERMISSION[s.permission] ?? s.permission}</div>
             </div>
             <div style="display:flex;flex-direction:column;gap:6px">

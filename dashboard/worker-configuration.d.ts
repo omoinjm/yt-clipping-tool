@@ -28,6 +28,8 @@ interface __BaseEnv_Env {
 	CF_API_TOKEN: string;
 	CF_ACCOUNT_ID: string;
 	CF_ACCESS_GROUP_ID: string;
+	TWITCH_CLIENT_ID: string;
+	TWITCH_CLIENT_SECRET: string;
 	R2_ACCOUNT_ID: string;
 	R2_ACCESS_KEY_ID: string;
 	R2_SECRET_ACCESS_KEY: string;

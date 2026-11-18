@@ -146,6 +146,45 @@ def submit(source_id: str, n: int = typer.Option(None, help="clips to keep")) ->
     typer.echo(f"✓ submitted {source_id} → Batch job {job['jobId']}")
 
 
+def _publish_full(api: ApiState, source_id: str, wd: Path) -> None:
+    """Keep the full long-form video in R2 and register it with the dashboard. Never fails the job."""
+    from . import storage
+
+    try:
+        video = wd / "source.mp4"
+        thumb = wd / "full.jpg"
+        dur = ffmpeg.duration(video)
+        if not thumb.exists():
+            ffmpeg.thumbnail(video, thumb, at=min(60.0, dur / 3), width=960)
+        keys = storage.publish_full(source_id, video, thumb)
+        meta_file = wd / "source_meta.json"
+        meta = json.loads(meta_file.read_text()) if meta_file.exists() else {}
+        api.put_longform(source_id, **keys, duration=dur, title=meta.get("title"),
+                         description=meta.get("description"), tags=(meta.get("tags") or [])[:15])
+        pipeline.log(f"✓ full video kept: {keys['video_key']} ({int(keys['size']) / 1e9:.2f} GB)")
+    except Exception as e:  # the clips matter more; the full video can be backfilled with `clipper publish-full`
+        pipeline.log(f"! could not keep the full video: {e}")
+
+
+@app.command("publish-full")
+def publish_full(source_id: str) -> None:
+    """Backfill: copy a processed source's full video (work/<id>/source.mp4 in S3) to R2 and register it."""
+    import tempfile
+
+    from . import storage
+
+    api = _api()
+    with tempfile.TemporaryDirectory() as tmp:
+        wd = Path(tmp)
+        for name in ("source.mp4", "source_meta.json"):
+            try:
+                storage.s3().download_file(storage.work_bucket(), f"work/{source_id}/{name}", str(wd / name))
+            except Exception as e:
+                if name == "source.mp4":
+                    raise typer.BadParameter(f"work/{source_id}/source.mp4 isn't in S3 (expired after 30 days?): {e}")
+        _publish_full(api, source_id, wd)
+
+
 @app.command("cloud-run")
 def cloud_run(source_id: str) -> None:
     """Runs inside the Batch container: resume from S3, process on GPU, publish clips to R2."""
@@ -187,6 +226,8 @@ def cloud_run(source_id: str) -> None:
             pipeline.ingest(state, {k: row[k] for k in ("id", "origin", "owner", "permission", "proof", "credit")}, raw)
             raw.unlink(missing_ok=True)
             checkpoint()
+        if isinstance(state, ApiState):
+            _publish_full(state, source_id, wd)
         pipeline.transcribe(state, source_id)
         checkpoint()
         pipeline.scenes(state, source_id)

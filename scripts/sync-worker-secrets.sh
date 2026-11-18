@@ -39,4 +39,6 @@ infisical run --env "$ENV" --silent -- bash -c '
   put CF_API_TOKEN "$ACCESS_API_TOKEN"
   put CF_ACCOUNT_ID "${CLOUDFLARE_ACCOUNT_ID:-}"
   put CF_ACCESS_GROUP_ID "${CF_ACCESS_GROUP_ID:-}"
+  put TWITCH_CLIENT_ID "${TWITCH_CLIENT_ID:-}"
+  put TWITCH_CLIENT_SECRET "${TWITCH_CLIENT_SECRET:-}"
 '
